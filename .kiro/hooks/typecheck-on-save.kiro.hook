@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "name": "Typecheck on save",
+  "description": "Type-check the project when a TS/TSX file is saved",
+  "version": "1",
+  "when": { "type": "fileEdited", "patterns": ["src/**/*.ts", "src/**/*.tsx"] },
+  "then": { "type": "askAgent", "prompt": "Run `npm run typecheck`. If it fails, fix the type errors in the files you just changed. Do not loosen tsconfig or add `any`." }
+}

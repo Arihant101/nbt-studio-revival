@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "name": "Test NBT parser on change",
+  "description": "Run parser tests whenever src/nbt changes",
+  "version": "1",
+  "when": { "type": "fileEdited", "patterns": ["src/nbt/**/*.ts"] },
+  "then": { "type": "askAgent", "prompt": "Run `npx vitest run src/nbt/`. If any test fails, fix the parser/serializer, not the test, unless the test is wrong per the nbt-format steering file." }
+}

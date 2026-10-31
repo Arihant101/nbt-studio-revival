@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/* Semantic tokens. Components use these (bg-bg, text-fg, border-edge...), never raw hex.
+   Values come from the active theme on <html data-theme="...">. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-edge: var(--edge);
+  --color-accent: var(--accent);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-danger: var(--danger);
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Dark: clean, neutral editor */
+:root,
+[data-theme="dark"] {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --edge: #2a2f3a;
+  --accent: #4f9dff;
+  --fg: #e6e8ee;
+  --muted: #8a93a6;
+  --danger: #ff5c5c;
+}
+
+/* Spooky: Costume Contest theme ("haunted chest") */
+[data-theme="spooky"] {
+  --bg: #0a0a0f;
+  --panel: #15121e;
+  --edge: #5b1a8c;
+  --accent: #ff7a1a;
+  --fg: #ede6f5;
+  --muted: #a493b8;
+  --danger: #ff3b6b;
+}
