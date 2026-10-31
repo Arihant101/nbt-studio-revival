@@ -283,9 +283,10 @@ function writePayload(writer: Writer, tag: Tag): void {
       writer.writeString(tag.value)
       break
     case TagType.List: {
-      // Empty lists conventionally use End (0) as their element type.
-      const elementType = tag.value.length === 0 ? tag.elementType : tag.value[0].type
-      writer.writeUint8(elementType)
+      // The declared elementType is the single source of truth for the
+      // element-type byte. Empty lists conventionally use End (0); the
+      // element payloads themselves are written from tag.value below.
+      writer.writeUint8(tag.elementType)
       writer.writeInt(tag.value.length)
       for (const child of tag.value) writePayload(writer, child)
       break

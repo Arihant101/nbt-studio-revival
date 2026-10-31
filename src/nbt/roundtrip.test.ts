@@ -26,7 +26,7 @@ function sampleDocument(compression: 'none' | 'gzip'): NbtDocument {
       ['intMax', { type: TagType.Int, value: 2147483647 }],
       ['longTag', { type: TagType.Long, value: 9223372036854775807n }],
       ['longMin', { type: TagType.Long, value: -9223372036854775808n }],
-      ['floatTag', { type: TagType.Float, value: Math.fround(3.5) }],
+      ['floatTag', { type: TagType.Float, value: Math.fround(3.14) }],
       ['doubleTag', { type: TagType.Double, value: 2.718281828459045 }],
       ['byteArrayTag', { type: TagType.ByteArray, value: Int8Array.from([-1, 0, 1, 127, -128]) }],
       ['stringTag', { type: TagType.String, value: 'Hello, NBT! éå你好' }],
@@ -52,6 +52,7 @@ function sampleDocument(compression: 'none' | 'gzip'): NbtDocument {
         },
       ],
       ['emptyList', { type: TagType.List, elementType: TagType.End, value: [] }],
+      ['emptyCompoundList', { type: TagType.List, elementType: TagType.Compound, value: [] }],
       [
         'listOfCompounds',
         {
