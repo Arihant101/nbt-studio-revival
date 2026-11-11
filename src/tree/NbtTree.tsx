@@ -18,8 +18,32 @@ import type { NbtPath } from '../nbt/edit'
 import { useThemeStore, type Theme } from '../store/useThemeStore'
 import { childCount, formatTagValue, tagDisplay } from './tagDisplay'
 
-/** Serialize a path to a stable string key (also used for data-nbt-path). */
-function pathKey(path: NbtPath): string {
+/**
+ * Injective, reversible serialization of an NbtPath.
+ *
+ * Used for the React key, the expand-Set membership key, and the
+ * `data-nbt-path-json` DOM attribute so each rendered node stays
+ * unambiguously addressable by its real NbtPath. Unlike a `/`-joined
+ * string this preserves (a) the string-vs-number distinction between a
+ * Compound key and a List index and (b) keys that themselves contain the
+ * display separator, so two distinct nodes can never collide to the same
+ * key. JSON of the path array round-trips straight back into an NbtPath.
+ */
+function pathId(path: NbtPath): string {
+  return JSON.stringify(path)
+}
+
+/** Parse a `data-nbt-path-json` value back into a real NbtPath. */
+export function parsePathId(id: string): NbtPath {
+  return JSON.parse(id) as NbtPath
+}
+
+/**
+ * Human-readable display form used for `data-nbt-path`. This is lossy by
+ * design (steps joined with `/`, like edit.ts describePath) and is NOT used
+ * for identity or addressing - use pathId/data-nbt-path-json for that.
+ */
+function pathDisplay(path: NbtPath): string {
   return path.join('/')
 }
 
@@ -41,8 +65,11 @@ interface TreeNodeProps {
 function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle }: TreeNodeProps) {
   const display = tagDisplay(tag.type, theme)
   const container = isContainer(tag)
-  const key = pathKey(path)
-  const isExpanded = expanded.has(key)
+  // Identity/addressing uses the injective JSON form; the slash-joined form is
+  // display-only (data-nbt-path) for human-readability.
+  const id = pathId(path)
+  const displayPath = pathDisplay(path)
+  const isExpanded = expanded.has(id)
   const count = childCount(tag)
 
   const keyLabel = nodeKey === null ? null : String(nodeKey)
@@ -63,16 +90,20 @@ function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle }: TreeNo
   )
 
   return (
-    <li data-nbt-path={key} style={{ paddingLeft: `${depth * 1}rem` }}>
+    <li data-nbt-path={displayPath} data-nbt-path-json={id} style={{ paddingLeft: `${depth * 1}rem` }}>
       {container ? (
         <button
           type="button"
-          onClick={() => toggle(key)}
+          onClick={() => toggle(id)}
           aria-expanded={isExpanded}
           className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-panel focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
-          <span className="text-muted" aria-hidden="true">
-            {isExpanded ? '▾' : '▸'}
+          <span
+            className="nbt-caret text-muted"
+            data-expanded={isExpanded}
+            aria-hidden="true"
+          >
+            ▸
           </span>
           {rowContent}
         </button>
@@ -105,7 +136,7 @@ function renderChildren(
       const childPath: NbtPath = [...path, childKey]
       return (
         <TreeNode
-          key={pathKey(childPath)}
+          key={pathId(childPath)}
           nodeKey={childKey}
           tag={childTag}
           path={childPath}
@@ -122,7 +153,7 @@ function renderChildren(
       const childPath: NbtPath = [...path, index]
       return (
         <TreeNode
-          key={pathKey(childPath)}
+          key={pathId(childPath)}
           nodeKey={index}
           tag={childTag}
           path={childPath}
@@ -146,7 +177,7 @@ export interface NbtTreeProps {
 export function NbtTree({ doc }: NbtTreeProps) {
   const theme = useThemeStore((s) => s.theme)
   // Root ([]) starts expanded; deeper containers start collapsed.
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']))
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set([pathId([])]))
 
   const toggle = useCallback((key: string) => {
     setExpanded((prev) => {

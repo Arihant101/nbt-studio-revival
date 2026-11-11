@@ -2,8 +2,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 
-import { NbtTree } from './NbtTree'
+import { NbtTree, parsePathId } from './NbtTree'
 import { sampleDocument } from './sampleDocument'
+import type { NbtDocument, Tag } from '../nbt/types'
+import { TagType } from '../nbt/types'
+import { getIn } from '../nbt/edit'
 
 afterEach(cleanup)
 
@@ -89,5 +92,71 @@ describe('<NbtTree>', () => {
     const firstEntry = document.querySelector('[data-nbt-path="compoundList/0"]') as HTMLElement
     fireEvent.click(within(firstEntry).getAllByRole('button')[0])
     expect(document.querySelector('[data-nbt-path="compoundList/0/id"]')).not.toBeNull()
+  })
+
+  it('exposes the real NbtPath (string-vs-number steps preserved) via data-nbt-path-json', () => {
+    const doc = sampleDocument()
+    render(<NbtTree doc={doc} />)
+
+    // Drill into compoundList -> [0] -> id, the same nested leaf as above.
+    const compoundList = document.querySelector(
+      '[data-nbt-path="compoundList"]',
+    ) as HTMLElement
+    fireEvent.click(within(compoundList).getAllByRole('button')[0])
+    const firstEntry = document.querySelector('[data-nbt-path="compoundList/0"]') as HTMLElement
+    fireEvent.click(within(firstEntry).getAllByRole('button')[0])
+
+    const leaf = document.querySelector('[data-nbt-path="compoundList/0/id"]') as HTMLElement
+    const realPath = parsePathId(leaf.getAttribute('data-nbt-path-json') as string)
+
+    // The real NbtPath keeps the List index as a NUMBER and the Compound keys
+    // as STRINGS - a distinction the slash-joined display form loses.
+    expect(realPath).toEqual(['compoundList', 0, 'id'])
+    expect(typeof realPath[1]).toBe('number')
+    expect(typeof realPath[0]).toBe('string')
+
+    // The recovered path must address the exact leaf tag through edit.ts getIn,
+    // proving the data-nbt-path-json attribute is a usable Task 6/7 hook.
+    const tag = getIn(doc.root, realPath)
+    expect(tag).toEqual({ type: TagType.String, value: 'minecraft:stone' })
+  })
+
+  it('keeps distinct nodes addressable even when a Compound key contains the display separator', () => {
+    // Two sibling keys ('a/b' and 'a') plus a nested 'b' would all collide to
+    // the slash-joined string 'root/a/b'. The injective JSON id keeps them
+    // distinct, so each node round-trips back to its real, correct path.
+    const doc: NbtDocument = {
+      name: 'collisions',
+      compression: 'none',
+      root: {
+        type: TagType.Compound,
+        value: new Map<string, Tag>([
+          ['a/b', { type: TagType.Int, value: 1 }],
+          [
+            'a',
+            {
+              type: TagType.Compound,
+              value: new Map<string, Tag>([['b', { type: TagType.Int, value: 2 }]]),
+            },
+          ],
+        ]),
+      },
+    }
+    render(<NbtTree doc={doc} />)
+
+    // Expand 'a' so its child 'a' -> 'b' mounts.
+    const aNode = document.querySelector('[data-nbt-path="a"]') as HTMLElement
+    fireEvent.click(within(aNode).getAllByRole('button')[0])
+
+    const ids = [...document.querySelectorAll('[data-nbt-path-json]')].map((el) =>
+      parsePathId(el.getAttribute('data-nbt-path-json') as string),
+    )
+
+    // Both the 'a/b' key leaf and the nested a -> b leaf are present and
+    // recover to DIFFERENT real paths, and each resolves to its own value.
+    expect(ids).toContainEqual(['a/b'])
+    expect(ids).toContainEqual(['a', 'b'])
+    expect(getIn(doc.root, ['a/b'])).toEqual({ type: TagType.Int, value: 1 })
+    expect(getIn(doc.root, ['a', 'b'])).toEqual({ type: TagType.Int, value: 2 })
   })
 })

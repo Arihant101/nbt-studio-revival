@@ -49,6 +49,13 @@ describe('tagDisplay - type presentation', () => {
     expect(sigil(TagType.List, 'spooky')).toBe('🦴')
   })
 
+  it('assigns a distinct sigil to every TagType in each theme (readable at a glance)', () => {
+    for (const theme of THEMES) {
+      const sigils = ALL_TYPES.map((type) => sigil(type, theme))
+      expect(new Set(sigils).size).toBe(ALL_TYPES.length)
+    }
+  })
+
   it('references only semantic token color utilities (no raw hex)', () => {
     for (const type of ALL_TYPES) {
       expect(tagTypeInfo(type).color).not.toMatch(/#/)

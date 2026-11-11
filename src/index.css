@@ -35,3 +35,21 @@
   --muted: #a493b8;
   --danger: #ff3b6b;
 }
+
+/* Tree-view disclosure caret. The glyph points right (collapsed) and rotates
+   90deg to point down when expanded. The rotation transition is gated behind
+   prefers-reduced-motion: no-preference, so users who request reduced motion
+   get an instant, non-animated state change (the rotation still applies, just
+   with no transition). */
+.nbt-caret {
+  display: inline-block;
+  transform: rotate(0deg);
+}
+.nbt-caret[data-expanded="true"] {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .nbt-caret {
+    transition: transform 150ms ease;
+  }
+}

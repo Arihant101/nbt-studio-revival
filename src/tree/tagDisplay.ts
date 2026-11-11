@@ -40,12 +40,12 @@ const DESCRIPTORS: Record<TagType, TagDescriptor> = {
   [T.Long]: { label: 'Long', color: 'text-accent', sigils: { dark: 'L', spooky: '⛓️' } },
   [T.Float]: { label: 'Float', color: 'text-accent', sigils: { dark: 'f', spooky: '🌫️' } },
   [T.Double]: { label: 'Double', color: 'text-accent', sigils: { dark: 'd', spooky: '🌙' } },
-  [T.ByteArray]: { label: 'ByteArray', color: 'text-muted', sigils: { dark: '[b]', spooky: '🦴' } },
+  [T.ByteArray]: { label: 'ByteArray', color: 'text-muted', sigils: { dark: '[b]', spooky: '🪦' } },
   [T.String]: { label: 'String', color: 'text-fg', sigils: { dark: '"', spooky: '📜' } },
   [T.List]: { label: 'List', color: 'text-fg', sigils: { dark: '[]', spooky: '🦴' } },
   [T.Compound]: { label: 'Compound', color: 'text-fg', sigils: { dark: '{}', spooky: '💀' } },
   [T.IntArray]: { label: 'IntArray', color: 'text-muted', sigils: { dark: '[#]', spooky: '🧮' } },
-  [T.LongArray]: { label: 'LongArray', color: 'text-muted', sigils: { dark: '[L]', spooky: '⛓️' } },
+  [T.LongArray]: { label: 'LongArray', color: 'text-muted', sigils: { dark: '[L]', spooky: '⚰️' } },
 }
 
 /** Label + semantic color for a tag type (theme-independent). */
