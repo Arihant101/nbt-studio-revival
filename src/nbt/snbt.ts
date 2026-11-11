@@ -10,9 +10,12 @@ import { TagType, type Tag } from './types'
 //   LongArray  [L;1L,2L,...]
 //   Numbers    suffix b=byte, s=short, (none)=int, L=long, f=float, d=double.
 //              A bare decimal (contains '.', 'e' or explicit d suffix) is a Double.
-//   Strings    quoted with " or ' (backslash escapes), or unquoted when the
-//              token matches [A-Za-z0-9._+-]+ and is not a valid number.
+//   Strings    quoted with " or ' (Java escapes \\, \" and \' only), or
+//              unquoted when the token matches [A-Za-z0-9._+-]+ and is not a
+//              valid number.
 //   Keys       same quoting rules as strings.
+//   Special    NaN / Infinity / -Infinity survive as Double (bare) or Float
+//   floats     (with the f suffix), matching what serializeSnbt emits.
 //
 // Suffix letters are accepted in either case (L/l, B/b, S/s, F/f, D/d).
 
@@ -22,11 +25,29 @@ import { TagType, type Tag } from './types'
 
 const UNQUOTED_RE = /^[A-Za-z0-9._+-]+$/
 
-/** Quote a string/key only when it cannot be written unquoted. */
+/**
+ * Quote a string/key only when it cannot be written unquoted. A token that
+ * would reparse as a number (e.g. "123", "5b", "NaN") must be quoted too,
+ * otherwise the round-trip would silently reclassify it as a numeric tag.
+ */
 function writeString(value: string): string {
-  if (UNQUOTED_RE.test(value)) return value
+  if (UNQUOTED_RE.test(value) && !looksNumeric(value)) return value
+  // Java escapes: only backslash and the double quote are escaped inside "...".
   const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
   return `"${escaped}"`
+}
+
+/**
+ * True when an unquoted token would be read back as a numeric tag (or looks
+ * like an out-of-range number, which parseNumericToken throws on). Either way
+ * the value must be quoted to survive as a String.
+ */
+function looksNumeric(value: string): boolean {
+  try {
+    return parseNumericToken(value) !== null
+  } catch {
+    return true
+  }
 }
 
 /** Render a 32-bit float / 64-bit double so it parses back to the same value. */
@@ -206,7 +227,13 @@ class SnbtParser {
         if (el.type !== TagType.Byte && el.type !== TagType.Int) {
           this.error('Byte array elements must be byte values')
         }
-        out[i] = Number(el.value)
+        const n = Number(el.value)
+        // Reject values that would silently wrap through the Int8Array (e.g.
+        // [B;200] must not quietly become -56).
+        if (n < -128 || n > 127) {
+          this.error(`Byte array element ${n} is out of range [-128, 127]`)
+        }
+        out[i] = n
       })
       return { type: TagType.ByteArray, value: out }
     }
@@ -215,6 +242,11 @@ class SnbtParser {
       elements.forEach((el, i) => {
         if (el.type !== TagType.Int) {
           this.error('Int array elements must be int values')
+        }
+        // Int elements already pass through toInt32 when parsed, but guard any
+        // future widening so oversized values cannot silently wrap here.
+        if (el.value < -2147483648 || el.value > 2147483647) {
+          this.error(`Int array element ${el.value} is out of range for i32`)
         }
         out[i] = el.value
       })
@@ -265,6 +297,11 @@ class SnbtParser {
       if (ch === '\\') {
         const escaped = this.text[this.pos + 1]
         if (escaped === undefined) this.error('Unterminated escape sequence')
+        // Java Edition SNBT only treats \\, \" and \' as escapes inside a
+        // quoted string. Any other backslash sequence is invalid.
+        if (escaped !== '\\' && escaped !== '"' && escaped !== "'") {
+          this.error(`Invalid escape sequence '\\${escaped}'`)
+        }
         out += escaped
         this.pos += 2
         continue
@@ -300,14 +337,35 @@ const INT_RE = /^[+-]?\d+$/
 // Floating point: requires a decimal point, exponent, or explicit f/d suffix.
 const FLOAT_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[fF]$/
 const DOUBLE_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[dD]?$/
+// Special IEEE-754 values. These mirror what numberToText/serializeSnbt emits:
+// a Float carries the f suffix, a Double is bare. Infinity may be signed.
+const SPECIAL_FLOAT_RE = /^(NaN|[+-]?Infinity)[fF]$/
+const SPECIAL_DOUBLE_RE = /^(NaN|[+-]?Infinity)$/
+
+// Signed 64-bit range for Long literals.
+const I64_MIN = -(2n ** 63n)
+const I64_MAX = 2n ** 63n - 1n
+
+/** Map "NaN" / "Infinity" / "-Infinity" to the IEEE-754 value it names. */
+function specialValue(token: string): number {
+  if (token === 'NaN') return NaN
+  return token[0] === '-' ? -Infinity : Infinity
+}
 
 /**
  * Map an unquoted token to a numeric Tag, or return null when it is not a
  * number (so the caller treats it as an unquoted String). A plain integer with
  * no suffix is an Int; a value with a decimal point / exponent and no suffix is
- * a Double.
+ * a Double. NaN/Infinity (optionally with the f suffix) round-trip as the
+ * correct Float/Double so they are never silently reclassified as Strings.
  */
 function parseNumericToken(token: string): Tag | null {
+  if (SPECIAL_FLOAT_RE.test(token)) {
+    return { type: TagType.Float, value: Math.fround(specialValue(token.slice(0, -1))) }
+  }
+  if (SPECIAL_DOUBLE_RE.test(token)) {
+    return { type: TagType.Double, value: specialValue(token) }
+  }
   if (BYTE_RE.test(token)) {
     return { type: TagType.Byte, value: toInt8(parseInt(token.slice(0, -1), 10)) }
   }
@@ -315,8 +373,17 @@ function parseNumericToken(token: string): Tag | null {
     return { type: TagType.Short, value: toInt16(parseInt(token.slice(0, -1), 10)) }
   }
   if (LONG_RE.test(token)) {
-    return { type: TagType.Long, value: BigInt(token.slice(0, -1)) }
+    const value = BigInt(token.slice(0, -1))
+    // Reject out-of-range longs rather than let them silently wrap if later
+    // pushed through a BigInt64Array, matching the i8/i16/i32 discipline.
+    if (value < I64_MIN || value > I64_MAX) {
+      throw new Error(`Long literal ${token} is out of range for i64`)
+    }
+    return { type: TagType.Long, value }
   }
+  // INT_RE must be checked before DOUBLE_RE: DOUBLE_RE's suffix is optional, so
+  // it also matches a bare integer. Reordering would reclassify every int as a
+  // double.
   if (INT_RE.test(token)) {
     return { type: TagType.Int, value: toInt32(parseInt(token, 10)) }
   }

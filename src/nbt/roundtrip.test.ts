@@ -163,8 +163,14 @@ function sampleSnbtDocument(): Tag {
     ['float', { type: TagType.Float, value: Math.fround(3.14) }],
     ['double', { type: TagType.Double, value: 2.718281828 }],
     ['doubleWhole', { type: TagType.Double, value: 5 }],
+    ['doubleNegWhole', { type: TagType.Double, value: -5 }],
     ['quoted', { type: TagType.String, value: 'hello "world"\\ and spaces' }],
     ['unquoted', { type: TagType.String, value: 'plain_token-1.0' }],
+    // Strings that look like numbers must be quoted to survive, otherwise they
+    // would reparse as numeric tags.
+    ['looksLikeInt', { type: TagType.String, value: '123' }],
+    ['looksLikeByte', { type: TagType.String, value: '5b' }],
+    ['key with space', { type: TagType.String, value: 'value' }],
     ['byteArray', { type: TagType.ByteArray, value: new Int8Array([1, -2, 3]) }],
     ['intArray', { type: TagType.IntArray, value: new Int32Array([10, -20, 30]) }],
     ['longArray', { type: TagType.LongArray, value: new BigInt64Array([1n, -2n, 300n]) }],
@@ -233,5 +239,120 @@ describe('SNBT round-trip', () => {
       type: TagType.LongArray,
       value: new BigInt64Array([1n, 2n]),
     })
+  })
+
+  it('special float/double values (NaN, Infinity, -Infinity) survive round-trip', () => {
+    const cases: Tag[] = [
+      { type: TagType.Double, value: NaN },
+      { type: TagType.Double, value: Infinity },
+      { type: TagType.Double, value: -Infinity },
+      { type: TagType.Float, value: NaN },
+      { type: TagType.Float, value: Infinity },
+      { type: TagType.Float, value: -Infinity },
+    ]
+    for (const tag of cases) {
+      const text = serializeSnbt(tag)
+      const parsed = parseSnbt(text)
+      // The numeric type must be preserved (not silently turned into a String).
+      expect(parsed.type).toBe(tag.type)
+      if (
+        (tag.type === TagType.Double || tag.type === TagType.Float) &&
+        (parsed.type === TagType.Double || parsed.type === TagType.Float)
+      ) {
+        if (Number.isNaN(tag.value)) {
+          expect(Number.isNaN(parsed.value)).toBe(true)
+        } else {
+          expect(parsed.value).toBe(tag.value)
+        }
+      }
+      // parse -> serialize -> parse is type-preserving and stable.
+      expect(serializeSnbt(parsed)).toBe(text)
+    }
+
+    // The exact tokens the serializer emits, for documentation.
+    expect(serializeSnbt({ type: TagType.Double, value: NaN })).toBe('NaN')
+    expect(serializeSnbt({ type: TagType.Double, value: Infinity })).toBe('Infinity')
+    expect(serializeSnbt({ type: TagType.Double, value: -Infinity })).toBe('-Infinity')
+    expect(serializeSnbt({ type: TagType.Float, value: NaN })).toBe('NaNf')
+    expect(serializeSnbt({ type: TagType.Float, value: Infinity })).toBe('Infinityf')
+    expect(serializeSnbt({ type: TagType.Float, value: -Infinity })).toBe('-Infinityf')
+  })
+
+  it('Java-style quoted-string escapes round-trip', () => {
+    // A string containing both a double quote and a backslash. Java SNBT only
+    // escapes \\ and \" inside a double-quoted string.
+    const tag: Tag = { type: TagType.String, value: 'a"b\\c' }
+    const text = serializeSnbt(tag)
+    expect(text).toBe('"a\\"b\\\\c"')
+    expect(parseSnbt(text)).toEqual(tag)
+
+    // Single quotes are also valid string delimiters on the way in.
+    expect(parseSnbt("'he said \\'hi\\''")).toEqual({
+      type: TagType.String,
+      value: "he said 'hi'",
+    })
+
+    // Non-Java escapes (e.g. \n) are rejected rather than decoded as the bare
+    // next character.
+    expect(() => parseSnbt('"\\n"')).toThrow()
+  })
+
+  it('empty non-End list loses its elementType (inherent SNBT limitation)', () => {
+    // Textual SNBT writes any list as "[]" with no element-type marker, so an
+    // empty List<Compound> cannot record that it was a compound list. On
+    // reparse it necessarily comes back as elementType: End. This is a genuine
+    // limitation of the SNBT text format, not a parser bug, so we assert the
+    // lossy outcome explicitly to keep it deliberate.
+    const emptyCompoundList: Tag = {
+      type: TagType.List,
+      elementType: TagType.Compound,
+      value: [],
+    }
+    const text = serializeSnbt(emptyCompoundList)
+    expect(text).toBe('[]')
+    expect(parseSnbt(text)).toEqual({
+      type: TagType.List,
+      elementType: TagType.End,
+      value: [],
+    })
+  })
+
+  it('range-checks out-of-range longs and typed-array elements (throws)', () => {
+    // Long literals beyond the signed 64-bit range are rejected rather than
+    // kept as an oversized bigint that would wrap in a BigInt64Array.
+    expect(() => parseSnbt('99999999999999999999L')).toThrow()
+    expect(() => parseSnbt('9223372036854775808L')).toThrow() // i64 max + 1
+    // The boundary values are accepted.
+    expect(parseSnbt('9223372036854775807L')).toEqual({
+      type: TagType.Long,
+      value: 9223372036854775807n,
+    })
+
+    // An unsuffixed Int element out of [-128, 127] throws instead of silently
+    // wrapping via the Int8Array (e.g. [B;200] must not quietly become -56).
+    expect(() => parseSnbt('[B;200]')).toThrow()
+    // A suffixed byte literal (200b) legitimately wraps to -56 at the token
+    // level, matching the i8 wrapping convention used everywhere else.
+    expect(parseSnbt('[B;200b]')).toEqual({
+      type: TagType.ByteArray,
+      value: new Int8Array([-56]),
+    })
+    // In-range byte-array elements still parse.
+    expect(parseSnbt('[B;127b,-128b]')).toEqual({
+      type: TagType.ByteArray,
+      value: new Int8Array([127, -128]),
+    })
+  })
+
+  it('rejects malformed input', () => {
+    // Unterminated quoted string.
+    expect(() => parseSnbt('"oops')).toThrow()
+    // Trailing characters after a complete value.
+    expect(() => parseSnbt('1b 2b')).toThrow()
+    expect(() => parseSnbt('{a:1} extra')).toThrow()
+    // Bad separator inside a compound.
+    expect(() => parseSnbt('{a:1;b:2}')).toThrow()
+    // Bad separator inside a list.
+    expect(() => parseSnbt('[1;2]')).toThrow()
   })
 })
