@@ -37,7 +37,12 @@ export interface RemovalRecord {
   parentPath: NbtPath
   /** Compound key it lived under, when the parent is a Compound. */
   key?: string
-  /** List index it lived at, when the parent is a List. */
+  /**
+   * The removed tag's ordinal position within its parent container: the List
+   * array index, or (for a Compound) the key's insertion-order position. A
+   * future Graveyard/undo needs this to restore a resurrected tag to its
+   * original slot rather than appending it to the end.
+   */
   index?: number
 }
 
@@ -51,6 +56,40 @@ function isList(tag: Tag): tag is ListTag {
 
 function describePath(path: NbtPath): string {
   return path.length === 0 ? '<root>' : path.map((s) => String(s)).join('/')
+}
+
+/** Inclusive integer bounds for the fixed-width integer tag types. */
+const INTEGER_BOUNDS: Record<
+  typeof TagType.Byte | typeof TagType.Short | typeof TagType.Int,
+  { min: number; max: number; name: string }
+> = {
+  [TagType.Byte]: { min: -128, max: 127, name: 'Byte' },
+  [TagType.Short]: { min: -32768, max: 32767, name: 'Short' },
+  [TagType.Int]: { min: -2147483648, max: 2147483647, name: 'Int' },
+}
+
+/**
+ * Validate that `value` is a whole number within the signed range of a
+ * fixed-width integer tag. Setting an out-of-range or fractional value is
+ * rejected here (rather than relying on silent truncation in binary.ts) so the
+ * store/UI gets a clear error. Float/Double/Long are not range-checked: floats
+ * are inherently approximate and Long is a bigint that binary.ts masks to 64
+ * bits, so there is no JS-level narrowing to guard against.
+ */
+function assertIntegerInRange(
+  type: typeof TagType.Byte | typeof TagType.Short | typeof TagType.Int,
+  value: number,
+  path: NbtPath,
+): void {
+  const { min, max, name } = INTEGER_BOUNDS[type]
+  if (!Number.isInteger(value)) {
+    throw new Error(`${name} tag at ${describePath(path)} expects an integer value, got ${value}`)
+  }
+  if (value < min || value > max) {
+    throw new Error(
+      `${name} tag at ${describePath(path)} value ${value} is out of range [${min}, ${max}]`,
+    )
+  }
 }
 
 /** Resolve the tag at `path`, or `undefined` if any step is missing. */
@@ -127,6 +166,11 @@ export function setValueIn(root: Tag, path: NbtPath, value: ScalarValue): Tag {
       case TagType.Byte:
       case TagType.Short:
       case TagType.Int:
+        if (typeof value !== 'number') {
+          throw new Error(`Tag at ${describePath(path)} expects a number value`)
+        }
+        assertIntegerInRange(tag.type, value, path)
+        return { type: tag.type, value }
       case TagType.Float:
       case TagType.Double:
         if (typeof value !== 'number') {
@@ -263,6 +307,18 @@ export function removeIn(root: Tag, path: NbtPath): { root: Tag; record: Removal
   const removed = requireIn(root, path)
   const parent = requireIn(root, parentPath)
 
+  // Capture the ordinal position before removal so a Graveyard restore can put
+  // the tag back in its original slot. For a Compound this is the key's
+  // insertion-order position; for a List it is the array index.
+  let ordinal: number | undefined
+  if (typeof last === 'string') {
+    if (isCompound(parent)) {
+      ordinal = [...parent.value.keys()].indexOf(last)
+    }
+  } else {
+    ordinal = last
+  }
+
   const newRoot = updateAt(root, parentPath, (p) => {
     if (typeof last === 'string') {
       if (!isCompound(p)) {
@@ -283,10 +339,8 @@ export function removeIn(root: Tag, path: NbtPath): { root: Tag; record: Removal
 
   const record: RemovalRecord =
     typeof last === 'string'
-      ? { removed, parentPath, key: last }
-      : { removed, parentPath, index: last }
-  // `parent` is used only to produce a clearer error when the path is wrong.
-  void parent
+      ? { removed, parentPath, key: last, index: ordinal }
+      : { removed, parentPath, index: ordinal }
   return { root: newRoot, record }
 }
 
@@ -345,8 +399,14 @@ export function moveIn(root: Tag, path: NbtPath, to: number | string): Tag {
     if (toIndex < 0 || toIndex >= keys.length) {
       throw new Error(`Target position ${toIndex} out of range for Compound at ${describePath(parentPath)}`)
     }
+    // `toIndex` is measured against the pre-removal key array. Removing the
+    // source first shifts every later position down by one, so a forward move
+    // (source before target) must decrement `toIndex` to still land the moved
+    // entry at the target's current slot (i.e. before the target key). Without
+    // this the entry would land one slot too far, after the target.
+    const insertIndex = fromIndex < toIndex ? toIndex - 1 : toIndex
     keys.splice(fromIndex, 1)
-    keys.splice(toIndex, 0, last)
+    keys.splice(insertIndex, 0, last)
     const newMap = new Map<string, Tag>()
     for (const k of keys) {
       newMap.set(k, parent.value.get(k)!)

@@ -106,6 +106,27 @@ describe('setValueIn', () => {
     expect(() => setValueIn(root, ['nested'], 1)).toThrow()
     expect(() => setValueIn(root, ['intList'], 1)).toThrow()
   })
+
+  it('rejects an out-of-range or fractional value for a fixed-width integer tag', () => {
+    const root = makeRoot()
+    // intTag is an Int: reject values outside the signed 32-bit range...
+    expect(() => setValueIn(root, ['intTag'], 999999999999)).toThrow()
+    // ...and non-integer values.
+    expect(() => setValueIn(root, ['intTag'], 3.14)).toThrow()
+  })
+
+  it('accepts a boundary integer value for a fixed-width integer tag', () => {
+    const root = makeRoot()
+    const next = asCompound(setValueIn(root, ['intTag'], 2147483647))
+    expect(next.value.get('intTag')).toEqual({ type: TagType.Int, value: 2147483647 })
+  })
+
+  it('does not range-check Float/Double tags', () => {
+    const root = makeRoot()
+    const next = asCompound(addIn(root, [], { type: TagType.Double, value: 0 }, 'd'))
+    const updated = asCompound(setValueIn(next, ['d'], 3.14159e40))
+    expect(updated.value.get('d')).toEqual({ type: TagType.Double, value: 3.14159e40 })
+  })
 })
 
 describe('renameIn', () => {
@@ -202,10 +223,19 @@ describe('removeIn', () => {
       removed: { type: TagType.Int, value: 1 },
       parentPath: [],
       key: 'intTag',
+      index: 0,
     })
     // immutability
     expect(root.value.has('intTag')).toBe(true)
     expect(next).not.toBe(root)
+  })
+
+  it('reports the ordinal position for a removed compound key', () => {
+    const root = makeRoot()
+    // stringTag is the 3rd entry (index 2) in the root compound.
+    const { record } = removeIn(root, ['stringTag'])
+    expect(record.key).toBe('stringTag')
+    expect(record.index).toBe(2)
   })
 
   it('removes a list element and reports its index', () => {
@@ -252,14 +282,36 @@ describe('moveIn', () => {
     expect([...next.value.keys()][0]).toBe('nested')
   })
 
-  it('reorders a compound key relative to another key', () => {
+  it('reorders a compound key relative to another key (backward move)', () => {
     const root = makeRoot()
-    // stringTag moves to the position currently held by intTag (index 0),
-    // landing immediately before it.
+    // stringTag (index 2) moves to the position currently held by intTag
+    // (index 0), landing immediately before it.
     const next = asCompound(moveIn(root, ['stringTag'], 'intTag'))
     const keys = [...next.value.keys()]
     expect(keys[0]).toBe('stringTag')
     expect(keys.indexOf('stringTag')).toBeLessThan(keys.indexOf('intTag'))
+  })
+
+  it('places the moved entry before the target key on a forward move', () => {
+    const root = makeRoot()
+    // intTag (index 0) moves toward stringTag (index 2). The contract is
+    // "place before the target key", so intTag must land immediately before
+    // stringTag, NOT after it.
+    const next = asCompound(moveIn(root, ['intTag'], 'stringTag'))
+    const keys = [...next.value.keys()]
+    expect(keys.indexOf('intTag')).toBe(keys.indexOf('stringTag') - 1)
+    // original order: intTag, longTag, stringTag, ... -> longTag, intTag, stringTag, ...
+    expect(keys.slice(0, 3)).toEqual(['longTag', 'intTag', 'stringTag'])
+  })
+
+  it('places the moved entry before a numeric target on a forward move', () => {
+    const root = makeRoot()
+    // intTag (index 0) moves forward to numeric target index 2 (stringTag's
+    // slot). It must land before stringTag, matching the key-target semantics.
+    const next = asCompound(moveIn(root, ['intTag'], 2))
+    const keys = [...next.value.keys()]
+    expect(keys.indexOf('intTag')).toBe(keys.indexOf('stringTag') - 1)
+    expect(keys.slice(0, 3)).toEqual(['longTag', 'intTag', 'stringTag'])
   })
 
   it('throws on out-of-range or missing targets', () => {

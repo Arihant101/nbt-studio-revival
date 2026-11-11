@@ -73,6 +73,7 @@ describe('useNbtStore edit actions', () => {
       removed: { type: TagType.String, value: 'hi' },
       parentPath: [],
       key: 'stringTag',
+      index: 1,
     })
   })
 
