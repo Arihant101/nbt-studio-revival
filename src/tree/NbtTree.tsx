@@ -18,6 +18,12 @@ import type { NbtPath } from '../nbt/edit'
 import { useThemeStore, type Theme } from '../store/useThemeStore'
 import { childCount, tagDisplay } from './tagDisplay'
 import { EditableLeafValue } from './EditableLeafValue'
+import {
+  AddChildControl,
+  DeleteControl,
+  MoveControls,
+  RenameControl,
+} from './StructureControls'
 
 /**
  * Injective, reversible serialization of an NbtPath.
@@ -61,9 +67,11 @@ interface TreeNodeProps {
   theme: Theme
   expanded: Set<string>
   toggle: (key: string) => void
+  /** The parent container tag, or null for the root node. */
+  parent: Tag | null
 }
 
-function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle }: TreeNodeProps) {
+function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle, parent }: TreeNodeProps) {
   const display = tagDisplay(tag.type, theme)
   const container = isContainer(tag)
   // Identity/addressing uses the injective JSON form; the slash-joined form is
@@ -77,6 +85,14 @@ function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle }: TreeNo
   // Accessible name for the editable leaf control: the Compound key / List
   // index when present, otherwise the tag type label.
   const leafLabel = keyLabel ?? display.label
+
+  // Structure-edit affordances (Task 7). The root ([]) is never
+  // renamable/removable/movable; a Compound child (string nodeKey) may be
+  // renamed; every non-root node may be removed and moved within its parent;
+  // every container may receive a new child. The commit path is the store.
+  const isRoot = path.length === 0
+  const isCompoundChild = typeof nodeKey === 'string' && parent?.type === TagType.Compound
+  const controlLabel = keyLabel ?? display.label
 
   const rowContent = (
     <span className="flex items-center gap-2">
@@ -93,28 +109,49 @@ function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle }: TreeNo
     </span>
   )
 
+  // The structure controls live in their own span, outside the container
+  // toggle <button> (buttons cannot nest), so every node row can host them.
+  const controls = (
+    <span className="ml-2 inline-flex flex-wrap items-center gap-1">
+      {isCompoundChild && (
+        <RenameControl parentPath={path.slice(0, -1)} oldKey={String(nodeKey)} path={path} />
+      )}
+      {!isRoot && parent !== null && (
+        <MoveControls path={path} parent={parent} label={controlLabel} />
+      )}
+      {container && (
+        <AddChildControl path={path} container={tag} label={controlLabel} theme={theme} />
+      )}
+      {!isRoot && <DeleteControl path={path} label={controlLabel} />}
+    </span>
+  )
+
   return (
     <li data-nbt-path={displayPath} data-nbt-path-json={id} style={{ paddingLeft: `${depth * 1}rem` }}>
       {container ? (
-        <button
-          type="button"
-          onClick={() => toggle(id)}
-          aria-expanded={isExpanded}
-          className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-panel focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        >
-          <span
-            className="nbt-caret text-muted"
-            data-expanded={isExpanded}
-            aria-hidden="true"
+        <div className="flex items-center gap-2 px-1 py-0.5">
+          <button
+            type="button"
+            onClick={() => toggle(id)}
+            aria-expanded={isExpanded}
+            className="flex items-center gap-2 rounded text-left hover:bg-panel focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
-            ▸
-          </span>
-          {rowContent}
-        </button>
+            <span
+              className="nbt-caret text-muted"
+              data-expanded={isExpanded}
+              aria-hidden="true"
+            >
+              ▸
+            </span>
+            {rowContent}
+          </button>
+          {controls}
+        </div>
       ) : (
         <div className="flex items-center gap-2 px-1 py-0.5">
           <span className="inline-block w-[1ch]" aria-hidden="true" />
           {rowContent}
+          {controls}
         </div>
       )}
       {container && isExpanded && (
@@ -148,6 +185,7 @@ function renderChildren(
           theme={theme}
           expanded={expanded}
           toggle={toggle}
+          parent={tag}
         />
       )
     })
@@ -165,6 +203,7 @@ function renderChildren(
           theme={theme}
           expanded={expanded}
           toggle={toggle}
+          parent={tag}
         />
       )
     })
@@ -207,6 +246,7 @@ export function NbtTree({ doc }: NbtTreeProps) {
         theme={theme}
         expanded={expanded}
         toggle={toggle}
+        parent={null}
       />
     </ul>
   )
