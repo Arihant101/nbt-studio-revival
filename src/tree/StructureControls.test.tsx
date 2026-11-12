@@ -77,6 +77,26 @@ describe('structure-edit: add', () => {
     })
   })
 
+  it('rejects an empty/whitespace Compound key with a themed error and leaves the doc unchanged', () => {
+    renderStoreTree()
+    const before = sampleDocument().root.value.size
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add child to Level' }))
+    const keyInput = screen.getByRole('textbox', { name: 'New child key for Level' })
+    // A whitespace-only key must be rejected before the store is touched.
+    fireEvent.change(keyInput, { target: { value: '   ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm add child to Level' }))
+
+    const alert = screen.getByRole('alert')
+    expect(alert.className).toContain('text-danger')
+    expect(alert.textContent).toContain('Key cannot be empty')
+
+    // No entry was inserted: the root size is unchanged and no ""-keyed tag landed.
+    const root = useNbtStore.getState().doc!.root
+    expect(root.value.size).toBe(before)
+    expect(getIn(root, [''])).toBeUndefined()
+  })
+
   it('surfaces a duplicate-key add as a themed error without corrupting the doc', () => {
     renderStoreTree()
     fireEvent.click(screen.getByRole('button', { name: 'Add child to Level' }))

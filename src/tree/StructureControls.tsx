@@ -389,6 +389,15 @@ export function AddChildControl({ path, container, label, theme }: AddChildContr
 
   function commit() {
     try {
+      // Guard an empty/whitespace-only Compound key BEFORE touching the store
+      // (edit-core only rejects duplicate keys, not empty ones). A `""`-keyed
+      // entry has no label to re-open rename, so we reject it here and surface
+      // the same themed inline error, mirroring EditableLeafValue's "Value
+      // cannot be empty" guard. Lists have no key, so this applies only to the
+      // Compound path.
+      if (isCompound && keyDraft.trim() === '') {
+        throw new Error('Key cannot be empty')
+      }
       const tag = defaultTagForType(type)
       if (isCompound) {
         add(path, tag, keyDraft)
