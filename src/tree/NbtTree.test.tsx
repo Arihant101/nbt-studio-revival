@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 
 import { NbtTree, parsePathId } from './NbtTree'
@@ -7,6 +7,7 @@ import { sampleDocument } from './sampleDocument'
 import type { NbtDocument, Tag } from '../nbt/types'
 import { TagType } from '../nbt/types'
 import { getIn } from '../nbt/edit'
+import { useNbtStore } from '../store/useNbtStore'
 
 afterEach(cleanup)
 
@@ -158,5 +159,241 @@ describe('<NbtTree>', () => {
     expect(ids).toContainEqual(['a', 'b'])
     expect(getIn(doc.root, ['a/b'])).toEqual({ type: TagType.Int, value: 1 })
     expect(getIn(doc.root, ['a', 'b'])).toEqual({ type: TagType.Int, value: 2 })
+  })
+})
+
+describe('<NbtTree> inline editing', () => {
+  // setValue reads the shared useNbtStore singleton, so load a fresh doc into
+  // the store before each test and reset it afterwards for isolation. Tests
+  // render against the store's doc and re-read it after a commit.
+  beforeEach(() => {
+    useNbtStore.getState().load('Level', sampleDocument())
+  })
+  afterEach(() => {
+    useNbtStore.getState().clear()
+    cleanup()
+  })
+
+  function renderStoreTree() {
+    render(<NbtTree doc={useNbtStore.getState().doc!} />)
+  }
+
+  it('activating a leaf value opens an input seeded with the current value', () => {
+    renderStoreTree()
+    // The resting value is an activation control with an accessible label.
+    const activate = screen.getByRole('button', { name: 'Edit value of intTag (intTag)' })
+    fireEvent.click(activate)
+
+    const input = screen.getByRole('textbox', { name: 'Value for intTag (intTag)' }) as HTMLInputElement
+    expect(input).toBeTruthy()
+    // Seeded with the full current value.
+    expect(input.value).toBe('42')
+  })
+
+  it('seeds a Long input with the full-precision bigint, not a truncated preview', () => {
+    renderStoreTree()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of longTag (longTag)' }))
+    const input = screen.getByRole('textbox', { name: 'Value for longTag (longTag)' }) as HTMLInputElement
+    expect(input.value).toBe('9223372036854775807')
+  })
+
+  it('seeds a typed-array input with the FULL element list, not the preview', () => {
+    renderStoreTree()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of intArrayTag (intArrayTag)' }))
+    const input = screen.getByRole('textbox', {
+      name: 'Value for intArrayTag (intArrayTag)',
+    }) as HTMLInputElement
+    // Full list, not the formatTagValue 3-element preview.
+    expect(input.value).toBe('10, 20, 30, 40, 50')
+  })
+
+  it('committing a valid edit via Enter updates the store/doc', () => {
+    renderStoreTree()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of intTag (intTag)' }))
+    const input = screen.getByRole('textbox', { name: 'Value for intTag (intTag)' })
+    fireEvent.change(input, { target: { value: '100' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    // The doc in the store reflects the new value.
+    expect(getIn(useNbtStore.getState().doc!.root, ['intTag'])).toEqual({
+      type: TagType.Int,
+      value: 100,
+    })
+    // Edit mode closed: the input is gone, resting value shows.
+    expect(screen.queryByRole('textbox', { name: 'Value for intTag (intTag)' })).toBeNull()
+  })
+
+  it('committing a valid edit via the ✓ confirm button updates the store/doc', () => {
+    renderStoreTree()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of intTag (intTag)' }))
+    const input = screen.getByRole('textbox', { name: 'Value for intTag (intTag)' })
+    fireEvent.change(input, { target: { value: '7' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm edit of intTag (intTag)' }))
+
+    expect(getIn(useNbtStore.getState().doc!.root, ['intTag'])).toEqual({
+      type: TagType.Int,
+      value: 7,
+    })
+  })
+
+  it('shows a themed inline error on an invalid edit and does not corrupt the doc', () => {
+    renderStoreTree()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of byteTag (byteTag)' }))
+    const input = screen.getByRole('textbox', { name: 'Value for byteTag (byteTag)' })
+    // 999 is out of Byte range [-128, 127]; edit-core rejects it.
+    fireEvent.change(input, { target: { value: '999' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    // A themed inline error appears using the danger token.
+    const alert = screen.getByRole('alert')
+    expect(alert.className).toContain('text-danger')
+    expect(alert.textContent).toContain('out of range')
+
+    // The input stays open with a danger border so the user can fix it.
+    const stillOpen = screen.getByRole('textbox', {
+      name: 'Value for byteTag (byteTag)',
+    }) as HTMLInputElement
+    expect(stillOpen).toBeTruthy()
+    expect(stillOpen.className).toContain('border-danger')
+
+    // The doc's original value is untouched (no corruption).
+    expect(getIn(useNbtStore.getState().doc!.root, ['byteTag'])).toEqual({
+      type: TagType.Byte,
+      value: 7,
+    })
+  })
+
+  it('Escape cancels the edit and leaves the value unchanged', () => {
+    renderStoreTree()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of intTag (intTag)' }))
+    const input = screen.getByRole('textbox', { name: 'Value for intTag (intTag)' })
+    fireEvent.change(input, { target: { value: '12345' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    // Edit mode closed without committing.
+    expect(screen.queryByRole('textbox', { name: 'Value for intTag (intTag)' })).toBeNull()
+    // The doc value is unchanged.
+    expect(getIn(useNbtStore.getState().doc!.root, ['intTag'])).toEqual({
+      type: TagType.Int,
+      value: 42,
+    })
+  })
+
+  it('does not commit on the blur that follows an Escape cancel', () => {
+    renderStoreTree()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of intTag (intTag)' }))
+    const input = screen.getByRole('textbox', { name: 'Value for intTag (intTag)' })
+    fireEvent.change(input, { target: { value: '777' } })
+    // Escape then the blur it triggers: the blur-commit must be suppressed.
+    fireEvent.keyDown(input, { key: 'Escape' })
+    fireEvent.blur(input)
+
+    expect(getIn(useNbtStore.getState().doc!.root, ['intTag'])).toEqual({
+      type: TagType.Int,
+      value: 42,
+    })
+  })
+
+  it('commits on blur', () => {
+    renderStoreTree()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of intTag (intTag)' }))
+    const input = screen.getByRole('textbox', { name: 'Value for intTag (intTag)' })
+    fireEvent.change(input, { target: { value: '55' } })
+    fireEvent.blur(input)
+
+    expect(getIn(useNbtStore.getState().doc!.root, ['intTag'])).toEqual({
+      type: TagType.Int,
+      value: 55,
+    })
+  })
+
+  it('round-trips a Long edit as a bigint above Number.MAX_SAFE_INTEGER', () => {
+    renderStoreTree()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of longTag (longTag)' }))
+    const input = screen.getByRole('textbox', { name: 'Value for longTag (longTag)' })
+    fireEvent.change(input, { target: { value: '9223372036854775806' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    const committed = getIn(useNbtStore.getState().doc!.root, ['longTag'])
+    expect(committed).toEqual({ type: TagType.Long, value: 9223372036854775806n })
+    // Prove it is a true bigint, not a Number-lossy value.
+    expect(committed && 'value' in committed ? typeof committed.value : null).toBe('bigint')
+  })
+
+  it('parses a comma-separated IntArray edit back into an Int32Array', () => {
+    renderStoreTree()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of intArrayTag (intArrayTag)' }))
+    const input = screen.getByRole('textbox', { name: 'Value for intArrayTag (intArrayTag)' })
+    fireEvent.change(input, { target: { value: '1, 2, 3' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    const committed = getIn(useNbtStore.getState().doc!.root, ['intArrayTag'])
+    expect(committed?.type).toBe(TagType.IntArray)
+    expect(committed && 'value' in committed ? committed.value : null).toBeInstanceOf(Int32Array)
+    expect(
+      committed && 'value' in committed ? Array.from(committed.value as Int32Array) : null,
+    ).toEqual([1, 2, 3])
+  })
+
+  it('does not render an editor for container (Compound/List) nodes', () => {
+    renderStoreTree()
+    // Containers keep the (count) display and expose no edit-value control.
+    expect(screen.queryByRole('button', { name: 'Edit value of intList' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Edit value of nested' })).toBeNull()
+  })
+
+  it('gives two same-keyed leaves in different compounds distinct accessible names', () => {
+    renderStoreTree()
+    // Both compoundList entries hold a `count` Byte. Without path qualification
+    // the two activation controls would share the name "Edit value of count";
+    // the path-qualified name keeps them globally unique.
+    const compoundList = document.querySelector(
+      '[data-nbt-path="compoundList"]',
+    ) as HTMLElement
+    fireEvent.click(within(compoundList).getAllByRole('button')[0])
+    const first = document.querySelector('[data-nbt-path="compoundList/0"]') as HTMLElement
+    const second = document.querySelector('[data-nbt-path="compoundList/1"]') as HTMLElement
+    fireEvent.click(within(first).getAllByRole('button')[0])
+    fireEvent.click(within(second).getAllByRole('button')[0])
+
+    // Each `count` leaf is addressable by a distinct, path-qualified name.
+    const firstCount = screen.getByRole('button', {
+      name: 'Edit value of count (compoundList/0/count)',
+    })
+    const secondCount = screen.getByRole('button', {
+      name: 'Edit value of count (compoundList/1/count)',
+    })
+    expect(firstCount).not.toBe(secondCount)
+    // The ambiguous bare name no longer matches either control.
+    expect(screen.queryByRole('button', { name: 'Edit value of count' })).toBeNull()
+  })
+
+  it('writes the store exactly once when Enter commit is followed by the unmount blur', () => {
+    // Wrap setValue with a counting spy BEFORE render so the component captures
+    // the spied reference (it reads the action once via the selector).
+    const original = useNbtStore.getState().setValue
+    let calls = 0
+    useNbtStore.setState({
+      setValue: (path, value) => {
+        calls += 1
+        original(path, value)
+      },
+    })
+
+    renderStoreTree()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of intTag (intTag)' }))
+    const input = screen.getByRole('textbox', { name: 'Value for intTag (intTag)' })
+    fireEvent.change(input, { target: { value: '100' } })
+
+    // Enter commits; the input then unmounts and fires blur, which must be a
+    // no-op because the commit→blur path is latched like Escape.
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.blur(input)
+
+    expect(calls).toBe(1)
+    expect(getIn(useNbtStore.getState().doc!.root, ['intTag'])).toEqual({
+      type: TagType.Int,
+      value: 100,
+    })
   })
 })

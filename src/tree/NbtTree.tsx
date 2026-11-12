@@ -16,7 +16,8 @@ import type { NbtDocument, Tag } from '../nbt/types'
 import { TagType } from '../nbt/types'
 import type { NbtPath } from '../nbt/edit'
 import { useThemeStore, type Theme } from '../store/useThemeStore'
-import { childCount, formatTagValue, tagDisplay } from './tagDisplay'
+import { childCount, tagDisplay } from './tagDisplay'
+import { EditableLeafValue } from './EditableLeafValue'
 
 /**
  * Injective, reversible serialization of an NbtPath.
@@ -73,6 +74,9 @@ function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle }: TreeNo
   const count = childCount(tag)
 
   const keyLabel = nodeKey === null ? null : String(nodeKey)
+  // Accessible name for the editable leaf control: the Compound key / List
+  // index when present, otherwise the tag type label.
+  const leafLabel = keyLabel ?? display.label
 
   const rowContent = (
     <span className="flex items-center gap-2">
@@ -84,7 +88,7 @@ function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle }: TreeNo
       {container ? (
         <span className="text-muted">({count})</span>
       ) : (
-        <span className="text-fg">{formatTagValue(tag)}</span>
+        <EditableLeafValue tag={tag} path={path} theme={theme} label={leafLabel} />
       )}
     </span>
   )
