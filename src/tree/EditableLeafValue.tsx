@@ -134,6 +134,23 @@ interface EditableLeafValueProps {
 }
 
 /**
+ * Build a globally-unique, stable accessible name for a leaf's controls.
+ *
+ * The human `label` (a Compound key / List index / tag type) is only locally
+ * unique: `count` appears under every `compoundList` entry and List element
+ * leaves fall back to numeric indices (`0`, `1`) that collide across every
+ * List. Qualifying with the node's real NbtPath makes the name unique across
+ * the whole tree, so screen readers and `getByRole({ name })` queries can tell
+ * sibling-same-key leaves apart. The root leaf (empty path) keeps the bare
+ * label. The path is joined with `/`, matching the tree's `data-nbt-path`
+ * display form; identity/addressing still flows through the real `path` prop.
+ */
+function accessibleName(label: string, path: NbtPath): string {
+  if (path.length === 0) return label
+  return `${label} (${path.join('/')})`
+}
+
+/**
  * Click/keyboard-activatable leaf value that opens an inline editor committing
  * through the store. Resting state shows the compact formatted value; editing
  * state shows a seeded input plus a ✓ confirm affordance and an inline error.
@@ -143,21 +160,35 @@ export function EditableLeafValue({ tag, path, theme, label }: EditableLeafValue
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
-  // Set on Escape so the input's blur handler does not then fire a commit.
-  const cancelledRef = useRef(false)
+  // Latched when the editor is closing (on Escape, or right after a successful
+  // commit) so the blur the unmounting input fires cannot re-run commit():
+  // Escape must not commit at all, and an Enter/✓ commit must write exactly
+  // once. Reset in beginEdit so a closed field reopens cleanly. A legitimate
+  // blur-commit (editing then clicking away) still runs because the flag is
+  // only set once a commit/cancel has already decided the field is closing.
+  const closingRef = useRef(false)
+
+  // The accessible names are derived once per render from the path-qualified
+  // label so the activation button, the input, and the ✓ confirm all agree.
+  const name = accessibleName(label, path)
 
   function beginEdit() {
     setDraft(editableSeed(tag))
     setError(null)
-    cancelledRef.current = false
+    closingRef.current = false
     setEditing(true)
   }
 
   function commit() {
-    if (cancelledRef.current) return
+    // Guard the commit→blur path: once a commit (or cancel) has closed the
+    // field, the unmount-triggered blur re-enters here and must be a no-op.
+    if (closingRef.current) return
     try {
       const value = parseDraft(tag, draft)
       setValue(path, value)
+      // Latch BEFORE closing so the blur that the unmounting input fires is
+      // suppressed and the store is written exactly once.
+      closingRef.current = true
       setError(null)
       setEditing(false)
     } catch (err) {
@@ -168,7 +199,7 @@ export function EditableLeafValue({ tag, path, theme, label }: EditableLeafValue
   }
 
   function cancel() {
-    cancelledRef.current = true
+    closingRef.current = true
     setError(null)
     setEditing(false)
   }
@@ -178,7 +209,7 @@ export function EditableLeafValue({ tag, path, theme, label }: EditableLeafValue
       <button
         type="button"
         onClick={beginEdit}
-        aria-label={`Edit value of ${label}`}
+        aria-label={`Edit value of ${name}`}
         className="rounded px-1 text-left text-fg hover:bg-panel focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         {formatTagValue(tag)}
@@ -196,7 +227,7 @@ export function EditableLeafValue({ tag, path, theme, label }: EditableLeafValue
         type="text"
         autoFocus
         value={draft}
-        aria-label={`Value for ${label}`}
+        aria-label={`Value for ${name}`}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
@@ -214,8 +245,10 @@ export function EditableLeafValue({ tag, path, theme, label }: EditableLeafValue
       />
       <button
         type="button"
-        aria-label={`Confirm edit of ${label}`}
-        // Commit before the input's blur-commit can fire; harmless if both run.
+        aria-label={`Confirm edit of ${name}`}
+        // preventDefault keeps focus on the input so its blur does not fire
+        // before this click; the closingRef latch then makes any later blur a
+        // no-op, so the ✓ commit writes the store exactly once.
         onMouseDown={(e) => e.preventDefault()}
         onClick={commit}
         className="rounded border border-edge px-1 text-accent hover:bg-panel focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
