@@ -10,7 +10,8 @@
 // Both parsers throw on malformed input; we let those messages propagate
 // verbatim so the UI can surface them.
 
-import { parseBinary } from '../nbt/binary'
+import { detectCompression, parseBinary } from '../nbt/binary'
+import { MAX_FILE_BYTES } from '../nbt/limits'
 import { parseSnbt } from '../nbt/snbt'
 import type { NbtDocument, Tag } from '../nbt/types'
 import { TagType } from '../nbt/types'
@@ -49,16 +50,20 @@ function snbtDocName(fileName: string): string {
 export async function importBytes(fileName: string, bytes: Uint8Array): Promise<NbtDocument> {
   const lower = fileName.toLowerCase()
 
-  // (1) gzip magic → binary (parseBinary inflates gzip itself).
-  if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+  if (bytes.length === 0) {
+    throw new Error('File is empty')
+  }
+
+  // (1) gzip / zlib magic → binary (parseBinary inflates it itself).
+  if (detectCompression(bytes) !== 'none') {
     return parseBinary(bytes)
   }
 
   // (2) extension hint.
-  if (lower.endsWith('.snbt')) {
+  if (lower.endsWith('.snbt') || lower.endsWith('.txt')) {
     return importSnbt(fileName, bytes)
   }
-  if (lower.endsWith('.nbt') || lower.endsWith('.dat')) {
+  if (BINARY_EXTENSIONS.some((ext) => lower.endsWith(ext))) {
     return parseBinary(bytes)
   }
 
@@ -76,6 +81,12 @@ export async function importBytes(fileName: string, bytes: Uint8Array): Promise<
   // a precise message rather than us guessing.
   return parseBinary(bytes)
 }
+
+/** Extensions that are always binary NBT (usually gzipped). */
+const BINARY_EXTENSIONS = ['.nbt', '.dat', '.dat_old', '.schem', '.schematic', '.litematic']
+
+/** Value for the file picker's accept attribute. */
+export const ACCEPTED_EXTENSIONS = [...BINARY_EXTENSIONS, '.snbt', '.txt'].join(',')
 
 /** Decode SNBT text, parse it, and wrap a Compound root into an NbtDocument. */
 function importSnbt(fileName: string, bytes: Uint8Array): NbtDocument {
@@ -106,6 +117,11 @@ function firstNonWhitespaceByte(bytes: Uint8Array): number | undefined {
  * the caller (App) can catch and surface them without loading a broken doc.
  */
 export async function importFile(file: File): Promise<NbtDocument> {
+  if (file.size > MAX_FILE_BYTES) {
+    throw new Error(
+      `File is ${(file.size / 1024 / 1024).toFixed(1)} MiB; the limit is ${MAX_FILE_BYTES / 1024 / 1024} MiB`,
+    )
+  }
   const bytes = new Uint8Array(await file.arrayBuffer())
   return importBytes(file.name, bytes)
 }

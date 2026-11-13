@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { Analytics } from '@vercel/analytics/react'
 import { useNbtStore } from './store/useNbtStore'
 import { useThemeStore } from './store/useThemeStore'
@@ -6,7 +6,7 @@ import { NbtTree } from './tree/NbtTree'
 import { Graveyard } from './tree/Graveyard'
 import { sampleDocument } from './tree/sampleDocument'
 import { computeMatches } from './tree/searchMatch'
-import { importFile } from './import/importFile'
+import { ACCEPTED_EXTENSIONS, importFile } from './import/importFile'
 import { parseErrorLocation } from './import/parseErrorLocation'
 import type { ParseErrorLocation } from './import/parseErrorLocation'
 import { exportDocument } from './export/exportFile'
@@ -68,11 +68,19 @@ const locatedCopy: Record<'dark' | 'spooky', (position: number) => string> = {
   spooky: (position) => `cracked here, parse error at character ${position}`,
 }
 
+// Shown next to the file name while there are unexported changes.
+const unsavedCopy: Record<'dark' | 'spooky', string> = {
+  dark: '● unsaved changes',
+  spooky: '👻 restless spirits (unsaved)',
+}
+
 export default function App() {
   const fileName = useNbtStore((s) => s.fileName)
   const doc = useNbtStore((s) => s.doc)
   const load = useNbtStore((s) => s.load)
   const markExported = useNbtStore((s) => s.markExported)
+  const unsaved = useNbtStore((s) => s.unsaved)
+  const docVersion = useNbtStore((s) => s.docVersion)
   const { theme, toggle } = useThemeStore()
   const spooky = theme === 'spooky'
 
@@ -88,14 +96,36 @@ export default function App() {
     document.documentElement.dataset.theme = theme
   }, [theme])
 
+  // Warn before closing/reloading the tab with unexported changes. Everything
+  // lives in memory only, so leaving the page loses the edits for good.
+  useEffect(() => {
+    if (!unsaved) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [unsaved])
+
+  // A freshly loaded document starts with a clean search box.
+  useEffect(() => {
+    setSearch('')
+  }, [docVersion])
+
   // Séance no-match detection. When a doc is loaded and the search query is
   // active (non-empty after trim) but yields zero matches, show a themed
   // muted empty-state message. Reuses computeMatches (the SAME matcher the
   // tree uses) rather than duplicating matching logic.
-  const normalizedQuery = search.trim().toLowerCase()
+  // The tree search walks the whole document, so let React defer it behind
+  // typing on big files instead of blocking every keystroke.
+  const deferredSearch = useDeferredValue(search)
+  const normalizedQuery = deferredSearch.trim().toLowerCase()
   const searchActive = normalizedQuery !== ''
-  const hasNoMatches =
-    doc !== null && searchActive && computeMatches(doc.root, normalizedQuery).matches.size === 0
+  const hasNoMatches = useMemo(
+    () => doc !== null && searchActive && computeMatches(doc.root, normalizedQuery).matches.size === 0,
+    [doc, searchActive, normalizedQuery],
+  )
 
   // Import the first file from a picker/drop. On success route it through the
   // store's load so the existing NbtTree renders it; on failure surface the
@@ -146,7 +176,11 @@ export default function App() {
         e.preventDefault()
         setDragOver(true)
       }}
-      onDragLeave={() => setDragOver(false)}
+      onDragLeave={(e) => {
+        // dragleave also fires when moving between child elements; only clear
+        // the highlight when the pointer actually leaves the app.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false)
+      }}
       onDrop={(e) => {
         e.preventDefault()
         setDragOver(false)
@@ -156,11 +190,11 @@ export default function App() {
       <header className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-accent">{spooky ? '🎃 ' : ''}NBT Studio Revival</h1>
         <div className="flex items-center gap-2">
-          <label className="cursor-pointer rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent focus-within:border-accent">
+          <label className="cursor-pointer rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent focus-within:border-accent focus-within:ring-1 focus-within:ring-accent">
             {spooky ? '📂 Import' : 'Import'}
             <input
               type="file"
-              accept=".nbt,.dat,.snbt"
+              accept={ACCEPTED_EXTENSIONS}
               aria-label="Import NBT file"
               onChange={(e) => {
                 void handleFiles(e.target.files)
@@ -172,7 +206,7 @@ export default function App() {
           </label>
           <button
             onClick={() => load('sample.nbt', sampleDocument())}
-            className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent"
+            className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             {spooky ? '🪦 Load sample' : 'Load sample'}
           </button>
@@ -196,7 +230,7 @@ export default function App() {
           )}
           <button
             onClick={toggle}
-            className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent"
+            className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             {spooky ? '🌙 Dark mode' : '👻 Spooky mode'}
           </button>
@@ -206,7 +240,15 @@ export default function App() {
         {spooky ? 'The dead NBT editor, raised from the grave.' : 'A browser-based NBT editor for Minecraft Java Edition.'}
       </p>
       {error !== null && (
-        <div role="alert" className="mt-4 rounded border border-danger px-3 py-2 text-danger">
+        <div role="alert" className="relative mt-4 rounded border border-danger px-3 py-2 pr-10 text-danger">
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            aria-label="Dismiss error"
+            className="absolute right-2 top-2 rounded border border-danger px-1.5 text-danger hover:bg-bg focus:outline-none focus-visible:ring-1 focus-visible:ring-danger"
+          >
+            ✕
+          </button>
           <p>{error.message}</p>
           {error.location.kind === 'position' && (
             <p className="mt-1 flex items-center gap-1 text-danger">
@@ -223,7 +265,12 @@ export default function App() {
       {doc ? (
         <>
           <section className="mt-8 overflow-auto rounded-lg border border-edge bg-panel p-4">
-            {fileName && <p className="mb-2 text-muted">{fileName}</p>}
+            {fileName && (
+              <p className="mb-2 text-muted">
+                {fileName}
+                {unsaved && <span className="ml-2 text-accent">{unsavedCopy[theme]}</span>}
+              </p>
+            )}
             <div className="mb-3 flex items-center gap-2">
               <input
                 type="search"
@@ -246,7 +293,7 @@ export default function App() {
             {hasNoMatches && (
               <p className="mb-3 text-muted">{searchNoMatchCopy[theme]}</p>
             )}
-            <NbtTree doc={doc} query={search} />
+            <NbtTree key={docVersion} doc={doc} query={deferredSearch} />
           </section>
           <Graveyard />
         </>

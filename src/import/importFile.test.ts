@@ -70,3 +70,21 @@ describe('importBytes: corrupted input', () => {
     await expect(importBytes('bad.nbt', bytes)).rejects.toThrow()
   })
 })
+
+describe('importBytes: hardening', () => {
+  it('rejects an empty file with a clear message', async () => {
+    await expect(importBytes('empty.nbt', new Uint8Array())).rejects.toThrow(/empty/)
+  })
+
+  it('sniffs zlib-compressed NBT regardless of extension', async () => {
+    const bytes = await serializeBinary({ ...sampleDocument(), compression: 'zlib' })
+    const doc = await importBytes('chunk.bin', bytes)
+    expect(doc.compression).toBe('zlib')
+  })
+
+  it('treats .schem / .litematic as binary NBT', async () => {
+    const bytes = await serializeBinary({ ...sampleDocument(), compression: 'gzip' })
+    await expect(importBytes('house.schem', bytes)).resolves.toMatchObject({ compression: 'gzip' })
+    await expect(importBytes('house.litematic', bytes)).resolves.toMatchObject({ compression: 'gzip' })
+  })
+})

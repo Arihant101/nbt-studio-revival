@@ -7,7 +7,8 @@ fileMatchPattern: "src/nbt/**"
 - Files are usually **gzip-compressed** (`level.dat`, `.nbt` structures). Detect magic bytes `1f 8b`; remember compression so export matches.
 - File = one named root tag: type byte (10 = Compound) + name (u16 length + bytes) + payload.
 - Tag IDs: 0=End, 1=Byte, 2=Short, 3=Int, 4=Long, 5=Float, 6=Double, 7=ByteArray, 8=String, 9=List, 10=Compound, 11=IntArray, 12=LongArray.
-- Strings: u16 length prefix + Modified UTF-8 (plain UTF-8 is fine except NUL and 4-byte chars).
+- Strings: u16 length prefix + Java Modified UTF-8 (NUL = C0 80, non-BMP = CESU-8 surrogate pairs). Implemented in `src/nbt/mutf8.ts`; never use plain TextEncoder for NBT strings.
+- Untrusted input: parsers enforce caps in `src/nbt/limits.ts` (depth 512, 256 MiB inflated, 5M tags). Check every length against remaining bytes before allocating.
 - List: element type byte + i32 count + payloads (no names). Empty list may have type 0 (End).
 - Compound: named tags until a single 0 (End) byte.
 - Arrays: i32 count + elements (i8 / i32 / i64).

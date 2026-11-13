@@ -62,15 +62,41 @@ function arrayTokens(draft: string): string[] {
   return trimmed.split(',').map((t) => t.trim())
 }
 
-/** Parse numeric array tokens, throwing a clear Error on any NaN token. */
-function parseNumberTokens(tokens: string[], typeName: string): number[] {
+/**
+ * Parse integer array tokens, throwing a clear Error on anything that is not a
+ * whole number in [min, max]. Typed-array constructors silently wrap (200 in an
+ * Int8Array becomes -56) and truncate (1.5 becomes 1), so validate first.
+ */
+function parseIntTokens(tokens: string[], typeName: string, min: number, max: number): number[] {
   return tokens.map((token) => {
-    const n = Number(token)
-    if (Number.isNaN(n)) {
-      throw new Error(`${typeName} element "${token}" is not a valid number`)
+    const n = token === '' ? NaN : Number(token)
+    if (!Number.isInteger(n)) {
+      throw new Error(`${typeName} element "${token}" is not a whole number`)
+    }
+    if (n < min || n > max) {
+      throw new Error(`${typeName} element ${n} is out of range [${min}, ${max}]`)
     }
     return n
   })
+}
+
+const I64_MIN = -(2n ** 63n)
+const I64_MAX = 2n ** 63n - 1n
+
+/** Parse a Long literal (optional trailing L), rejecting values outside i64. */
+function parseLong(token: string, what: string): bigint {
+  const body = token.trim().replace(/[lL]$/, '')
+  let value: bigint
+  try {
+    if (body === '') throw new Error()
+    value = BigInt(body)
+  } catch {
+    throw new Error(`${what} "${token.trim()}" is not a whole number`)
+  }
+  if (value < I64_MIN || value > I64_MAX) {
+    throw new Error(`${what} ${value} is out of range for a 64-bit Long`)
+  }
+  return value
 }
 
 /**
@@ -107,17 +133,16 @@ export function parseDraft(tag: Tag, draft: string): ScalarValue {
       if (trimmed === '') {
         throw new Error('Value cannot be empty')
       }
-      // BigInt() throws on a non-integer / invalid string, which we surface.
-      return BigInt(trimmed)
+      return parseLong(trimmed, 'Long value')
     }
     case TagType.String:
       return draft
     case TagType.ByteArray:
-      return new Int8Array(parseNumberTokens(arrayTokens(draft), 'ByteArray'))
+      return new Int8Array(parseIntTokens(arrayTokens(draft), 'ByteArray', -128, 127))
     case TagType.IntArray:
-      return new Int32Array(parseNumberTokens(arrayTokens(draft), 'IntArray'))
+      return new Int32Array(parseIntTokens(arrayTokens(draft), 'IntArray', -2147483648, 2147483647))
     case TagType.LongArray:
-      return new BigInt64Array(arrayTokens(draft).map((token) => BigInt(token)))
+      return new BigInt64Array(arrayTokens(draft).map((token) => parseLong(token, 'LongArray element')))
     case TagType.Compound:
     case TagType.List:
       // Unreachable: containers are never value-editable.

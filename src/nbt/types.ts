@@ -30,9 +30,12 @@ export type Tag =
   | { type: typeof TagType.IntArray; value: Int32Array }
   | { type: typeof TagType.LongArray; value: BigInt64Array }
 
-/** A parsed file: root tag name + root compound + whether it was gzipped. */
+/** How the binary file was wrapped on disk (re-applied on export). */
+export type Compression = 'none' | 'gzip' | 'zlib'
+
+/** A parsed file: root tag name + root compound + its on-disk compression. */
 export interface NbtDocument {
   name: string
   root: Extract<Tag, { type: typeof TagType.Compound }>
-  compression: 'none' | 'gzip'
+  compression: Compression
 }

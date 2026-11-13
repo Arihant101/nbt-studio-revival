@@ -22,6 +22,9 @@ export function triggerDownload(result: ExportResult): void {
     anchor.click()
     document.body.removeChild(anchor)
   } finally {
-    URL.revokeObjectURL(url)
+    // Revoking synchronously can cancel the download in some browsers
+    // (Firefox/Safari start the fetch asynchronously). Defer it so the URL is
+    // still released (no leaked Blob) but only after the download has begun.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
   }
 }
