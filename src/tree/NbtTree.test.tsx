@@ -162,6 +162,48 @@ describe('<NbtTree>', () => {
   })
 })
 
+describe('<NbtTree> empty-container placeholder', () => {
+  // A doc whose root compound holds a single EMPTY Compound child, so the
+  // placeholder behaviour can be exercised by expanding that child.
+  function docWithEmptyCompound(): NbtDocument {
+    return {
+      name: 'empties',
+      compression: 'none',
+      root: {
+        type: TagType.Compound,
+        value: new Map<string, Tag>([
+          ['emptyCompound', { type: TagType.Compound, value: new Map<string, Tag>() }],
+        ]),
+      },
+    }
+  }
+
+  it('renders a themed muted placeholder for an expanded empty container, and it is not a treeitem', () => {
+    render(<NbtTree doc={docWithEmptyCompound()} />)
+
+    // Collapsed by default: the placeholder is NOT shown yet.
+    expect(screen.queryByText('(empty)')).toBeNull()
+
+    // Expand the empty compound.
+    const node = document.querySelector('[data-nbt-path="emptyCompound"]') as HTMLElement
+    fireEvent.click(within(node).getAllByRole('button')[0])
+
+    // The dark-theme placeholder appears, using the muted semantic token.
+    const placeholder = screen.getByText('(empty)')
+    expect(placeholder).toBeTruthy()
+    expect(placeholder.className).toContain('text-muted')
+
+    // The placeholder is presentational chrome, not a navigable treeitem: it
+    // adds no new row with role=treeitem. Only root + emptyCompound remain.
+    const treeitems = document.querySelectorAll('[role="treeitem"]')
+    expect(treeitems.length).toBe(2)
+    // The placeholder row itself carries role=presentation, never treeitem, so
+    // it is not a navigable node (the treeitem count above is unchanged by it).
+    const row = placeholder.closest('li') as HTMLElement
+    expect(row.getAttribute('role')).toBe('presentation')
+  })
+})
+
 describe('<NbtTree> inline editing', () => {
   // setValue reads the shared useNbtStore singleton, so load a fresh doc into
   // the store before each test and reset it afterwards for isolation. Tests

@@ -137,6 +137,36 @@ describe('App export: failed export surfaces a themed alert and keeps the doc', 
   })
 })
 
+describe('App séance search: no-match empty state', () => {
+  it('shows the themed no-match message and keeps the Clear button enabled', () => {
+    useNbtStore.getState().load('sample.nbt', sampleDocument())
+    render(<App />)
+
+    // Default theme is dark, so the search box uses the dark accessible name.
+    const box = screen.getByRole('searchbox', { name: 'Search tags' })
+    // A query that cannot match any key or value in the sample document.
+    fireEvent.change(box, { target: { value: 'zzz-no-such-tag-zzz' } })
+
+    // The themed (dark) no-match empty-state copy appears...
+    expect(screen.getByText('No matches — clear the search to see all tags')).toBeTruthy()
+
+    // ...and the Clear button is present and enabled (the actionable step).
+    const clear = screen.getByRole('button', { name: 'Clear search' })
+    expect(clear).toBeTruthy()
+    expect((clear as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('does not show the no-match message when the query matches something', () => {
+    useNbtStore.getState().load('sample.nbt', sampleDocument())
+    render(<App />)
+
+    const box = screen.getByRole('searchbox', { name: 'Search tags' })
+    fireEvent.change(box, { target: { value: 'intTag' } })
+
+    expect(screen.queryByText('No matches — clear the search to see all tags')).toBeNull()
+  })
+})
+
 describe('App haunted tags: unsaved-edit marker set on edit, cleared on export', () => {
   it('marks an edited leaf as haunted, then clears it after a successful export', async () => {
     // Stub the object-URL APIs so triggerDownload succeeds in jsdom and the

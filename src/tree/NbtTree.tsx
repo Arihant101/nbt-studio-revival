@@ -76,6 +76,17 @@ function isContainer(tag: Tag): boolean {
   return childCount(tag) !== null
 }
 
+// Themed copy for the placeholder row shown inside an EXPANDED container that
+// has zero children, so an empty Compound/List reads as intentionally empty
+// rather than as a blank list. Routed through a Record<Theme,string> copy map
+// (never ad-hoc ternaries), mirroring the App.tsx copy-map pattern. Rendered
+// with the text-muted semantic token; it is presentational chrome, NOT a
+// treeitem, so it never enters flattenVisible / keyboard navigation.
+const emptyContainerCopy: Record<Theme, string> = {
+  dark: '(empty)',
+  spooky: '(empty crypt)',
+}
+
 /** A single entry in the flattened, in-DOM-order list of visible treeitems. */
 interface FlatNode {
   /** The node's path id (data-nbt-path-json / expansion-Set key). */
@@ -326,7 +337,17 @@ function TreeNode({
       )}
       {container && isExpanded && (
         <ul role="group" className="border-l border-edge">
-          {renderChildren(tag, path, depth + 1, theme, expanded, toggle, dirty, searchActive, matches, ancestors, nav)}
+          {count === 0 ? (
+            // Empty expanded container: render a muted, non-navigable
+            // placeholder row (presentation only, not role=treeitem) so the
+            // container does not render as a blank <ul>. Kept out of
+            // flattenVisible, so keyboard navigation is unaffected.
+            <li role="presentation" className="px-1 py-0.5" style={{ paddingLeft: `${(depth + 1) * 1}rem` }}>
+              <span className="text-muted">{emptyContainerCopy[theme]}</span>
+            </li>
+          ) : (
+            renderChildren(tag, path, depth + 1, theme, expanded, toggle, dirty, searchActive, matches, ancestors, nav)
+          )}
         </ul>
       )}
     </li>
