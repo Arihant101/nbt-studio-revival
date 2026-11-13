@@ -65,9 +65,11 @@ describe('exportDocument: SNBT', () => {
     const root = parseSnbt(result.data as string)
     expect(root.type).toBe(TagType.Compound)
     if (root.type === TagType.Compound) {
-      const originalKeys = [...doc.root.value.keys()].sort()
-      const roundTripKeys = [...root.value.keys()].sort()
-      expect(roundTripKeys).toEqual(originalKeys)
+      // Full-root equivalence: structure, scalar values, nested compounds/lists
+      // and typed arrays (and the bigint Long) must all survive the round-trip,
+      // not just the top-level key set. toEqual deep-compares the Map, the
+      // nested Maps, List arrays and the typed arrays by value.
+      expect(root).toEqual(doc.root)
     }
   })
 })

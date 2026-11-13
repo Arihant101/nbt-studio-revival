@@ -6,7 +6,7 @@
 // leaving a previously-loaded doc intact. Follows the StructureControls.test
 // pattern: clear the shared store in beforeEach, cleanup()+clear() in afterEach.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import App from './App'
@@ -85,6 +85,37 @@ describe('App export: control presence', () => {
     const snbt = screen.getByRole('button', { name: /Export \.snbt/ })
     expect(binary.tagName).toBe('BUTTON')
     expect(snbt.tagName).toBe('BUTTON')
+  })
+})
+
+describe('App export: failed export surfaces a themed alert and keeps the doc', () => {
+  it('shows the danger alert, leaves the loaded doc intact, and does not crash', async () => {
+    // Force triggerDownload to throw deterministically: stub URL.createObjectURL
+    // (whether or not jsdom provides it) so clicking Export .nbt makes
+    // handleExport catch the error into the themed role=alert danger paragraph.
+    // Restored in finally so other tests are unaffected. The doc is read-only
+    // through export, so it must remain loaded with its fileName untouched.
+    const original = globalThis.URL.createObjectURL
+    const spy = vi.fn(() => {
+      throw new Error('object URL unavailable')
+    })
+    globalThis.URL.createObjectURL = spy as unknown as typeof URL.createObjectURL
+    try {
+      useNbtStore.getState().load('sample.nbt', sampleDocument())
+      render(<App />)
+
+      fireEvent.click(screen.getByRole('button', { name: /Export \.nbt/ }))
+
+      const alert = await screen.findByRole('alert')
+      expect(alert.className).toContain('text-danger')
+      expect(spy).toHaveBeenCalled()
+
+      // The loaded doc is unchanged by the failed export.
+      expect(useNbtStore.getState().doc).not.toBeNull()
+      expect(useNbtStore.getState().fileName).toBe('sample.nbt')
+    } finally {
+      globalThis.URL.createObjectURL = original
+    }
   })
 })
 

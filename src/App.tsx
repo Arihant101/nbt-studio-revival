@@ -104,14 +104,14 @@ export default function App() {
               <button
                 onClick={() => void handleExport('binary')}
                 aria-label="Export .nbt"
-                className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent"
+                className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
                 {spooky ? '🧟 Export .nbt' : 'Export .nbt'}
               </button>
               <button
                 onClick={() => void handleExport('snbt')}
                 aria-label="Export .snbt"
-                className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent"
+                className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
                 {spooky ? '🧟 Export .snbt' : 'Export .snbt'}
               </button>
