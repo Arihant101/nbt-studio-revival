@@ -11,13 +11,14 @@
 // FEAT-001 tagDisplay helper; no ad-hoc theme ternaries live here. Styling uses
 // only semantic Tailwind tokens so both themes work automatically.
 
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { NbtDocument, Tag } from '../nbt/types'
 import { TagType } from '../nbt/types'
 import type { NbtPath } from '../nbt/edit'
 import { useNbtStore } from '../store/useNbtStore'
 import { useThemeStore, type Theme } from '../store/useThemeStore'
 import { childCount, hauntedMarker, tagDisplay } from './tagDisplay'
+import { computeMatches } from './searchMatch'
 import { EditableLeafValue } from './EditableLeafValue'
 import {
   AddChildControl,
@@ -76,9 +77,31 @@ interface TreeNodeProps {
    * member. Passed by reference so every node shares one lookup.
    */
   dirty: Set<string>
+  /**
+   * Whether a séance search is active (non-empty query). When false all
+   * search highlight/dim styling is off and the tree behaves normally.
+   */
+  searchActive: boolean
+  /** JSON path ids of nodes matching the active search query. */
+  matches: Set<string>
+  /** JSON path ids of ancestors of matches (force-expanded while searching). */
+  ancestors: Set<string>
 }
 
-function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle, parent, dirty }: TreeNodeProps) {
+function TreeNode({
+  nodeKey,
+  tag,
+  path,
+  depth,
+  theme,
+  expanded,
+  toggle,
+  parent,
+  dirty,
+  searchActive,
+  matches,
+  ancestors,
+}: TreeNodeProps) {
   const display = tagDisplay(tag.type, theme)
   const container = isContainer(tag)
   // Identity/addressing uses the injective JSON form; the slash-joined form is
@@ -88,8 +111,18 @@ function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle, parent, 
   const haunted = dirty.has(id)
   const marker = hauntedMarker(theme)
   const displayPath = pathDisplay(path)
-  const isExpanded = expanded.has(id)
   const count = childCount(tag)
+
+  // Séance search state for this node. A match gets a STATIC highlight (accent
+  // color + ring) plus a .nbt-lantern class whose glow animates only under
+  // prefers-reduced-motion: no-preference. A non-match that is also not an
+  // ancestor of a match is dimmed. While searching, ancestors of matches are
+  // force-expanded via an EFFECTIVE expansion set (userExpanded ∪ ancestors)
+  // so matches are visible without mutating the user's manual expansion.
+  const isMatch = searchActive && matches.has(id)
+  const isAncestor = searchActive && ancestors.has(id)
+  const isDimmed = searchActive && !isMatch && !isAncestor
+  const isExpanded = searchActive ? expanded.has(id) || ancestors.has(id) : expanded.has(id)
 
   const keyLabel = nodeKey === null ? null : String(nodeKey)
   // Accessible name for the editable leaf control: the Compound key / List
@@ -142,10 +175,29 @@ function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle, parent, 
     </span>
   )
 
+  // Row styling for the active séance search. Matches carry a static accent
+  // highlight (color + ring, perceivable with reduced motion) plus the
+  // .nbt-lantern glow class; non-matches that are not ancestors are dimmed.
+  // Both use semantic tokens only. The `data-search-match` / `data-search-dim`
+  // attributes make the state assertable in tests without relying on classes.
+  const rowClass = [
+    'flex items-center gap-2 rounded px-1 py-0.5',
+    isMatch ? 'nbt-lantern text-accent ring-1 ring-accent' : '',
+    isDimmed ? 'text-muted opacity-50' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   return (
-    <li data-nbt-path={displayPath} data-nbt-path-json={id} style={{ paddingLeft: `${depth * 1}rem` }}>
+    <li
+      data-nbt-path={displayPath}
+      data-nbt-path-json={id}
+      data-search-match={isMatch ? 'true' : undefined}
+      data-search-dim={isDimmed ? 'true' : undefined}
+      style={{ paddingLeft: `${depth * 1}rem` }}
+    >
       {container ? (
-        <div className="flex items-center gap-2 px-1 py-0.5">
+        <div className={rowClass}>
           <button
             type="button"
             onClick={() => toggle(id)}
@@ -164,7 +216,7 @@ function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle, parent, 
           {controls}
         </div>
       ) : (
-        <div className="flex items-center gap-2 px-1 py-0.5">
+        <div className={rowClass}>
           <span className="inline-block w-[1ch]" aria-hidden="true" />
           {rowContent}
           {controls}
@@ -172,7 +224,7 @@ function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle, parent, 
       )}
       {container && isExpanded && (
         <ul className="border-l border-edge">
-          {renderChildren(tag, path, depth + 1, theme, expanded, toggle, dirty)}
+          {renderChildren(tag, path, depth + 1, theme, expanded, toggle, dirty, searchActive, matches, ancestors)}
         </ul>
       )}
     </li>
@@ -187,6 +239,9 @@ function renderChildren(
   expanded: Set<string>,
   toggle: (key: string) => void,
   dirty: Set<string>,
+  searchActive: boolean,
+  matches: Set<string>,
+  ancestors: Set<string>,
 ) {
   if (tag.type === TagType.Compound) {
     const entries = [...tag.value.entries()]
@@ -204,6 +259,9 @@ function renderChildren(
           toggle={toggle}
           parent={tag}
           dirty={dirty}
+          searchActive={searchActive}
+          matches={matches}
+          ancestors={ancestors}
         />
       )
     })
@@ -223,6 +281,9 @@ function renderChildren(
           toggle={toggle}
           parent={tag}
           dirty={dirty}
+          searchActive={searchActive}
+          matches={matches}
+          ancestors={ancestors}
         />
       )
     })
@@ -233,10 +294,17 @@ function renderChildren(
 export interface NbtTreeProps {
   /** The document to render. Its root compound is shown first. */
   doc: NbtDocument
+  /**
+   * Séance search query (view-local, owned by App). Normalized here; when it
+   * is non-empty the tree highlights matches, dims non-matches, and
+   * force-expands ancestors of matches without mutating the user's manual
+   * expansion. Defaults to '' (search inactive).
+   */
+  query?: string
 }
 
 /** Collapsible, read-only tree view of an NBT document. */
-export function NbtTree({ doc }: NbtTreeProps) {
+export function NbtTree({ doc, query = '' }: NbtTreeProps) {
   const theme = useThemeStore((s) => s.theme)
   // Haunted/unsaved path ids from the store; a node marks itself when its own
   // id is a member. Read once here and threaded down so every node shares one
@@ -259,6 +327,17 @@ export function NbtTree({ doc }: NbtTreeProps) {
 
   const rootPath: NbtPath = []
 
+  // Séance search: normalize the query and compute match/ancestor id sets once
+  // per render (pure walk of the doc). An empty query yields empty sets, so the
+  // tree renders exactly as before. Memoized on the doc + normalized query so a
+  // keystroke only recomputes when the effective query changes.
+  const normalizedQuery = query.trim().toLowerCase()
+  const searchActive = normalizedQuery !== ''
+  const { matches, ancestors } = useMemo(
+    () => computeMatches(doc.root, normalizedQuery),
+    [doc, normalizedQuery],
+  )
+
   return (
     <ul className="font-mono text-sm" aria-label={`NBT tree for ${doc.name}`}>
       <TreeNode
@@ -271,6 +350,9 @@ export function NbtTree({ doc }: NbtTreeProps) {
         toggle={toggle}
         parent={null}
         dirty={dirty}
+        searchActive={searchActive}
+        matches={matches}
+        ancestors={ancestors}
       />
     </ul>
   )

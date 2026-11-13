@@ -86,3 +86,26 @@
     }
   }
 }
+
+/* Séance search match highlight (Task 10, increment C). The matching row is
+   given a STATIC accent ring + accent text by Tailwind token utilities in the
+   markup (ring-1 ring-accent text-accent), so matches are perceivable without
+   motion and in both themes (WCAG AA via the per-theme --accent). The
+   .nbt-lantern class adds only the soft "lantern glow" pulse, gated behind
+   prefers-reduced-motion: no-preference and mirroring the .nbt-caret /
+   .nbt-haunted pattern, so reduced-motion users keep the static ring with no
+   animation. Color references the theme token var, never raw hex. */
+@media (prefers-reduced-motion: no-preference) {
+  .nbt-lantern {
+    animation: nbt-lantern-glow 1.8s ease-in-out infinite;
+  }
+  @keyframes nbt-lantern-glow {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+    50% {
+      box-shadow: 0 0 8px 1px var(--accent);
+    }
+  }
+}

@@ -16,6 +16,23 @@ const dropZoneCopy: Record<'dark' | 'spooky', string> = {
   spooky: 'Feed the chest a .nbt / .dat / .snbt file…',
 }
 
+// Séance search (Task 10, increment C). Themed placeholder + accessible label
+// for the search box, routed through copy maps rather than ad-hoc ternaries.
+// The dark variant is a plain filter; spooky re-skins it as a "séance" with a
+// lantern glyph, while the behavior is identical in both themes.
+const searchPlaceholderCopy: Record<'dark' | 'spooky', string> = {
+  dark: 'Search keys and values',
+  spooky: '🔦 Séance: search keys and values',
+}
+const searchLabelCopy: Record<'dark' | 'spooky', string> = {
+  dark: 'Search tags',
+  spooky: 'Séance search',
+}
+const searchClearCopy: Record<'dark' | 'spooky', string> = {
+  dark: 'Clear search',
+  spooky: 'Snuff the lantern (clear search)',
+}
+
 export default function App() {
   const fileName = useNbtStore((s) => s.fileName)
   const doc = useNbtStore((s) => s.doc)
@@ -28,6 +45,9 @@ export default function App() {
   // (drives the 'drop here' visual) and the latest import error message.
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Séance search query. View-local (never persisted in the store); threaded
+  // into NbtTree which highlights matches and force-expands their ancestors.
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -143,7 +163,26 @@ export default function App() {
         <>
           <section className="mt-8 overflow-auto rounded-lg border border-edge bg-panel p-4">
             {fileName && <p className="mb-2 text-muted">{fileName}</p>}
-            <NbtTree doc={doc} />
+            <div className="mb-3 flex items-center gap-2">
+              <input
+                type="search"
+                value={search}
+                aria-label={searchLabelCopy[theme]}
+                placeholder={searchPlaceholderCopy[theme]}
+                onChange={(e) => setSearch(e.target.value)}
+                className="flex-1 rounded border border-edge bg-bg px-2 py-1 text-sm text-fg placeholder:text-muted focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              />
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                disabled={search === ''}
+                aria-label={searchClearCopy[theme]}
+                className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {spooky ? '🔦 Clear' : 'Clear'}
+              </button>
+            </div>
+            <NbtTree doc={doc} query={search} />
           </section>
           <Graveyard />
         </>
