@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNbtStore } from './store/useNbtStore'
 import { useThemeStore } from './store/useThemeStore'
 import { NbtTree } from './tree/NbtTree'
+import { Graveyard } from './tree/Graveyard'
 import { sampleDocument } from './tree/sampleDocument'
 import { importFile } from './import/importFile'
 import { exportDocument } from './export/exportFile'
@@ -134,10 +135,13 @@ export default function App() {
         </p>
       )}
       {doc ? (
-        <section className="mt-8 overflow-auto rounded-lg border border-edge bg-panel p-4">
-          {fileName && <p className="mb-2 text-muted">{fileName}</p>}
-          <NbtTree doc={doc} />
-        </section>
+        <>
+          <section className="mt-8 overflow-auto rounded-lg border border-edge bg-panel p-4">
+            {fileName && <p className="mb-2 text-muted">{fileName}</p>}
+            <NbtTree doc={doc} />
+          </section>
+          <Graveyard />
+        </>
       ) : (
         <section
           className={`mt-8 rounded-lg border-2 border-dashed p-12 text-center ${
