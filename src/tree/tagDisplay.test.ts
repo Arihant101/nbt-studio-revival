@@ -49,6 +49,19 @@ describe('tagDisplay - type presentation', () => {
     expect(sigil(TagType.List, 'spooky')).toBe('🦴')
   })
 
+  it('Compound and List sigils never collide in either theme (undoes a blank/dup regression)', () => {
+    for (const theme of THEMES) {
+      const compound = sigil(TagType.Compound, theme)
+      const list = sigil(TagType.List, theme)
+      // Both must be present...
+      expect(compound.length).toBeGreaterThan(0)
+      expect(list.length).toBeGreaterThan(0)
+      // ...and distinct, so the two most common container types never read the
+      // same at a glance (would fail if either were blanked or duplicated).
+      expect(compound).not.toBe(list)
+    }
+  })
+
   it('assigns a distinct sigil to every TagType in each theme (readable at a glance)', () => {
     for (const theme of THEMES) {
       const sigils = ALL_TYPES.map((type) => sigil(type, theme))

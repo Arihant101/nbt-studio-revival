@@ -49,11 +49,12 @@ const crackMarkerCopy: Record<'dark' | 'spooky', string> = {
   dark: '',
   spooky: '🩸 ',
 }
-// Build the located-offset sentence for a known character position.
-function locatedCopy(theme: 'dark' | 'spooky', position: number): string {
-  return theme === 'spooky'
-    ? `╳ cracked here — parse error at character ${position}`
-    : `Parse error at character ${position}`
+// Themed templates for the located-offset sentence, routed through a copy map
+// (one entry per theme) rather than an ad-hoc ternary. Each takes the character
+// position and returns the full line; spooky adds a "cracked here" phrasing.
+const locatedCopy: Record<'dark' | 'spooky', (position: number) => string> = {
+  dark: (position) => `Parse error at character ${position}`,
+  spooky: (position) => `cracked here, parse error at character ${position}`,
 }
 
 export default function App() {
@@ -192,7 +193,7 @@ export default function App() {
                   {crackMarkerCopy[theme]}
                 </span>
               )}
-              <span className="font-bold">{locatedCopy(theme, error.location.position)}</span>
+              <span className="font-bold">{locatedCopy[theme](error.location.position)}</span>
             </p>
           )}
         </div>
