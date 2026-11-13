@@ -625,4 +625,37 @@ describe('<NbtTree> keyboard navigation', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
     expect(row('nested/label')).not.toBeNull()
   })
+
+  it('keeps a single tab stop when the roving-focused row unmounts (mouse-collapse of an ancestor)', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    // Expand intList and move the roving focus onto its first child so
+    // focusedId names a descendant row (intList/0).
+    const intList = row('intList')
+    const toggle = within(intList).getAllByRole('button')[0]
+    toggle.focus()
+    fireEvent.keyDown(toggle, { key: 'ArrowRight' }) // expand
+    fireEvent.keyDown(toggle, { key: 'ArrowRight' }) // step to first child
+    const child = focusable('intList/0')
+    expect(document.activeElement).toBe(child)
+    expect(child.getAttribute('tabindex')).toBe('0')
+
+    // Collapse the ancestor by MOUSE. The focused child row now unmounts, so
+    // focusedId points at a row that no longer renders.
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(row('intList/0')).toBeNull()
+
+    // The tree must still have exactly one tabbable treeitem: the reconciled
+    // fallback snapped the tab stop to the nearest still-visible ancestor
+    // (intList), so a later Tab into the tree still finds a roving stop.
+    const tabStops = [...document.querySelectorAll('[data-nbt-path-json]')].filter((el) => {
+      const f = el.querySelector(':scope > div > button[aria-expanded]') ??
+        el.querySelector(':scope > div[tabindex]')
+      return (f as HTMLElement | null)?.getAttribute('tabindex') === '0'
+    })
+    expect(tabStops.length).toBe(1)
+    // The surviving ancestor (intList) is the one that now owns the tab stop.
+    expect(focusable('intList').getAttribute('tabindex')).toBe('0')
+    expect(focusable('').getAttribute('tabindex')).toBe('-1')
+  })
 })

@@ -477,6 +477,42 @@ export function NbtTree({ doc, query = '' }: NbtTreeProps) {
     [searchActive, expanded, ancestors],
   )
 
+  // The flat, in-DOM-order list of currently VISIBLE treeitems (mirrors the
+  // render recursion). Memoized so the keydown handler and the roving-target
+  // reconciliation below share one walk per render.
+  const flat = useMemo(
+    () => flattenVisible(doc.root, rootPath, isEffectivelyExpanded),
+    [doc, isEffectivelyExpanded],
+  )
+
+  // Reconcile the roving tab stop against the visible set. `focusedId` is kept
+  // as-is for the keydown logic, but the row it names can leave the DOM when an
+  // ancestor is collapsed by mouse or the focused node is moved/removed by the
+  // structure controls. If that happens no row would carry tabIndex 0 and a
+  // Tab into the tree would have no treeitem stop. So the EFFECTIVE roving
+  // target (the id we actually hand tabIndex 0) falls back to the nearest
+  // still-visible ANCESTOR of the focused path, and ultimately to the root id
+  // (pathId([])), which is always rendered and always visible. This only
+  // guarantees a tabbable row EXISTS; it never steals document focus (that
+  // stays driven by the keydown handler / user Tab).
+  const effectiveFocusedId = useMemo(() => {
+    const visible = new Set(flat.map((n) => n.id))
+    if (visible.has(focusedId)) return focusedId
+    // Walk the focused path upward, picking the first still-visible ancestor.
+    let path: NbtPath
+    try {
+      path = parsePathId(focusedId)
+    } catch {
+      return pathId([])
+    }
+    for (let p = path.slice(0, -1); p.length > 0; p = p.slice(0, -1)) {
+      const ancestorId = pathId(p)
+      if (visible.has(ancestorId)) return ancestorId
+    }
+    // The root is always visible.
+    return pathId([])
+  }, [flat, focusedId])
+
   const registerRow = useCallback((id: string, el: HTMLElement | null) => {
     if (el) rowRefs.current.set(id, el)
     else rowRefs.current.delete(id)
@@ -504,7 +540,6 @@ export function NbtTree({ doc, query = '' }: NbtTreeProps) {
       // textarea (EditableLeafValue / RenameControl / AddChildControl).
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
 
-      const flat = flattenVisible(doc.root, rootPath, isEffectivelyExpanded)
       if (flat.length === 0) return
       // Resolve the current node from the treeitem that actually contains the
       // event target (robust to focus timing). The row's focusable element
@@ -543,7 +578,11 @@ export function NbtTree({ doc, query = '' }: NbtTreeProps) {
             // Collapsed container: expand it (shared mouse/keyboard path).
             toggle(current.id)
           } else if (current.container && current.expanded) {
-            // Already expanded: move to the first child, if any.
+            // Already expanded: move to the first child, if any. flattenVisible
+            // emits children immediately after their parent in DOM order, so
+            // the first child (when present) is flat[index + 1] at depth + 1.
+            // The depth guard is belt-and-suspenders: if that invariant ever
+            // broke we safely no-op rather than focus a sibling.
             if (index < flat.length - 1 && flat[index + 1].depth === current.depth + 1) {
               focusRow(flat[index + 1].id)
             }
@@ -576,10 +615,13 @@ export function NbtTree({ doc, query = '' }: NbtTreeProps) {
           break
       }
     },
-    [doc, rootPath, isEffectivelyExpanded, focusedId, focusRow, toggle],
+    [flat, focusedId, focusRow, toggle],
   )
 
-  const nav: TreeNav = { focusedId, registerRow, onKeyDown, onRowFocus }
+  // The nav context carries the EFFECTIVE (reconciled) id for the tabIndex
+  // assignment so a tabbable row always exists even when the raw focusedId's
+  // row has unmounted. The keydown logic above still reads the raw focusedId.
+  const nav: TreeNav = { focusedId: effectiveFocusedId, registerRow, onKeyDown, onRowFocus }
 
   return (
     <ul
