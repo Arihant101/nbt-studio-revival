@@ -36,6 +36,8 @@ export interface ExportResult {
  * Examples: 'level.dat' -> 'level.nbt' (binary) / 'level.snbt' (snbt);
  * 'foo' (no known extension) -> 'foo.nbt'.
  */
+const KNOWN_EXTENSION_RE = /\.(nbt|dat|dat_old|schem|schematic|litematic|snbt|txt)$/i
+
 export function deriveExportFileName(
   sourceFileName: string | null,
   docName: string,
@@ -43,8 +45,13 @@ export function deriveExportFileName(
 ): string {
   const fromSource = (sourceFileName ?? '').split(/[\\/]/).pop() ?? ''
   const rawBase = fromSource !== '' ? fromSource : docName !== '' ? docName : 'document'
-  const base = rawBase.replace(/\.(nbt|dat|snbt)$/i, '')
-  const extension = format === 'binary' ? '.nbt' : '.snbt'
+  const match = KNOWN_EXTENSION_RE.exec(rawBase)
+  const base = match ? rawBase.slice(0, match.index) : rawBase
+  if (format === 'snbt') return `${base}.snbt`
+  // Keep the original binary extension so an edited level.dat downloads as
+  // level.dat (ready to drop back into the world folder), not level.nbt.
+  const sourceExt = match?.[0].toLowerCase()
+  const extension = sourceExt !== undefined && sourceExt !== '.snbt' && sourceExt !== '.txt' ? match![0] : '.nbt'
   return `${base}${extension}`
 }
 

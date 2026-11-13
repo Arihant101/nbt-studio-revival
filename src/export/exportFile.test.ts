@@ -19,7 +19,7 @@ describe('exportDocument: binary', () => {
     const doc = sampleDocument()
     const result = await exportDocument(doc, 'level.dat', 'binary')
 
-    expect(result.fileName).toBe('level.nbt')
+    expect(result.fileName).toBe('level.dat')
     expect(result.mimeType).toBe('application/octet-stream')
     expect(result.data).toBeInstanceOf(Uint8Array)
 
@@ -75,8 +75,9 @@ describe('exportDocument: SNBT', () => {
 })
 
 describe('deriveExportFileName', () => {
-  it('swaps a known extension for the format extension', () => {
-    expect(deriveExportFileName('level.dat', 'Level', 'binary')).toBe('level.nbt')
+  it('keeps the source binary extension and swaps to .snbt / .nbt otherwise', () => {
+    expect(deriveExportFileName('level.dat', 'Level', 'binary')).toBe('level.dat')
+    expect(deriveExportFileName('house.schem', 'Level', 'binary')).toBe('house.schem')
     expect(deriveExportFileName('level.dat', 'Level', 'snbt')).toBe('level.snbt')
     expect(deriveExportFileName('world.nbt', 'Level', 'snbt')).toBe('world.snbt')
     expect(deriveExportFileName('data.SNBT', 'Level', 'binary')).toBe('data.nbt')
@@ -88,7 +89,7 @@ describe('deriveExportFileName', () => {
   })
 
   it('strips a leading directory from the source filename', () => {
-    expect(deriveExportFileName('saves/world/level.dat', 'Level', 'binary')).toBe('level.nbt')
+    expect(deriveExportFileName('saves/world/level.dat', 'Level', 'binary')).toBe('level.dat')
   })
 
   it('falls back to doc.name when sourceFileName is null or empty', () => {

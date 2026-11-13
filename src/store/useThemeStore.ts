@@ -14,6 +14,15 @@ export const useThemeStore = create<ThemeState>()(
       theme: 'dark',
       toggle: () => set((s) => ({ theme: s.theme === 'dark' ? 'spooky' : 'dark' })),
     }),
-    { name: 'nbt-theme' },
+    {
+      name: 'nbt-theme',
+      // localStorage is user-editable: never trust a persisted value that is
+      // not one of the known themes (it is used as a lookup key and written to
+      // <html data-theme>).
+      merge: (persisted, current) => {
+        const theme = (persisted as { theme?: unknown } | null)?.theme
+        return theme === 'dark' || theme === 'spooky' ? { ...current, theme } : current
+      },
+    },
   ),
 )

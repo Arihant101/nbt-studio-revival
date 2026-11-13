@@ -42,6 +42,13 @@ interface NbtState {
    * NOT add anything here.
    */
   dirty: Set<string>
+  /**
+   * True when the document has any change (including deletions) since it was
+   * loaded or last exported. Drives the "leave page?" guard.
+   */
+  unsaved: boolean
+  /** Increments on every load/clear so views can reset per-document state. */
+  docVersion: number
   load: (fileName: string, doc: NbtDocument) => void
   clear: () => void
   setValue: (path: NbtPath, value: ScalarValue) => void
@@ -83,6 +90,58 @@ function remapListIndex(i: number, from: number, to: number): number {
   if (from < to) return i > from && i <= to ? i - 1 : i
   // from > to
   return i >= to && i < from ? i + 1 : i
+}
+
+/**
+ * Rewrite every dirty id that sits under `parentPath` by passing the path
+ * segment directly below `parentPath` through `remap`. `remap` returns the new
+ * segment, or `null` to drop the id (its node was deleted). Ids elsewhere are
+ * kept byte-for-byte. Keeps haunted markers attached to the right nodes after
+ * structural edits shift sibling indices or rename keys.
+ */
+function remapDirtyUnder(
+  dirty: Set<string>,
+  parentPath: NbtPath,
+  remap: (segment: string | number) => string | number | null,
+): Set<string> {
+  const depth = parentPath.length
+  const next = new Set<string>()
+  for (const id of dirty) {
+    let path: unknown
+    try {
+      path = JSON.parse(id)
+    } catch {
+      next.add(id)
+      continue
+    }
+    if (!Array.isArray(path) || path.length <= depth || !parentPath.every((seg, i) => path[i] === seg)) {
+      next.add(id)
+      continue
+    }
+    const seg = path[depth] as string | number
+    const mapped = remap(seg)
+    if (mapped === null) continue
+    if (mapped === seg) {
+      next.add(id)
+      continue
+    }
+    const remapped = path.slice()
+    remapped[depth] = mapped
+    next.add(JSON.stringify(remapped))
+  }
+  return next
+}
+
+/** List element removed at `index`: drop its subtree, shift later ones down. */
+function dirtyAfterListRemove(dirty: Set<string>, parentPath: NbtPath, index: number): Set<string> {
+  return remapDirtyUnder(dirty, parentPath, (seg) =>
+    typeof seg !== 'number' ? seg : seg === index ? null : seg > index ? seg - 1 : seg,
+  )
+}
+
+/** List element inserted at `index`: shift it and later ones up. */
+function dirtyAfterListInsert(dirty: Set<string>, parentPath: NbtPath, index: number): Set<string> {
+  return remapDirtyUnder(dirty, parentPath, (seg) => (typeof seg === 'number' && seg >= index ? seg + 1 : seg))
 }
 
 /**
@@ -154,25 +213,54 @@ export const useNbtStore = create<NbtState>((set, get) => ({
   graveyard: [],
   graveyardError: null,
   dirty: new Set<string>(),
+  unsaved: false,
+  docVersion: 0,
   load: (fileName, doc) =>
-    set({ fileName, doc, graveyard: [], graveyardError: null, dirty: new Set<string>() }),
+    set((s) => ({
+      fileName,
+      doc,
+      graveyard: [],
+      graveyardError: null,
+      dirty: new Set<string>(),
+      unsaved: false,
+      docVersion: s.docVersion + 1,
+    })),
   clear: () =>
-    set({ fileName: null, doc: null, graveyard: [], graveyardError: null, dirty: new Set<string>() }),
+    set((s) => ({
+      fileName: null,
+      doc: null,
+      graveyard: [],
+      graveyardError: null,
+      dirty: new Set<string>(),
+      unsaved: false,
+      docVersion: s.docVersion + 1,
+    })),
   setValue: (path, value) => {
     const { doc } = get()
     if (doc === null) return
     const root = setValueIn(doc.root, path, value)
     // The edited leaf is now unsaved: mark its own path haunted.
-    set((s) => ({ doc: { ...doc, root: root as NbtDocument['root'] }, dirty: withDirty(s.dirty, dirtyId(path)) }))
+    set((s) => ({
+      doc: { ...doc, root: root as NbtDocument['root'] },
+      dirty: withDirty(s.dirty, dirtyId(path)),
+      unsaved: true,
+    }))
   },
   rename: (parentPath, oldKey, newKey) => {
     const { doc } = get()
     if (doc === null) return
     const root = renameIn(doc.root, parentPath, oldKey, newKey)
-    // The renamed entry lives at its new key; mark that resulting path haunted.
+    // Renaming to the same key is a no-op: do not mark anything unsaved.
+    if (oldKey === newKey) return
+    // The renamed entry lives at its new key; mark that resulting path haunted,
+    // and carry any haunted descendants over from the old key.
     set((s) => ({
       doc: { ...doc, root: root as NbtDocument['root'] },
-      dirty: withDirty(s.dirty, dirtyId([...parentPath, newKey])),
+      dirty: withDirty(
+        remapDirtyUnder(s.dirty, parentPath, (seg) => (seg === oldKey ? newKey : seg)),
+        dirtyId([...parentPath, newKey]),
+      ),
+      unsaved: true,
     }))
   },
   add: (parentPath, tag, keyOrIndex) => {
@@ -190,9 +278,15 @@ export const useNbtStore = create<NbtState>((set, get) => ({
       childPath = [...parentPath, appendIndex]
     }
     const root = addIn(doc.root, parentPath, tag, keyOrIndex)
+    const slot = childPath[childPath.length - 1]
     set((s) => ({
       doc: { ...doc, root: root as NbtDocument['root'] },
-      dirty: withDirty(s.dirty, dirtyId(childPath)),
+      // Inserting into a List shifts later siblings; keep their markers aligned.
+      dirty: withDirty(
+        typeof slot === 'number' ? dirtyAfterListInsert(s.dirty, parentPath, slot) : s.dirty,
+        dirtyId(childPath),
+      ),
+      unsaved: true,
     }))
   },
   remove: (path) => {
@@ -201,9 +295,16 @@ export const useNbtStore = create<NbtState>((set, get) => ({
     const { root, record } = removeIn(doc.root, path)
     // Capture the removal into the graveyard so it can be resurrected later.
     const entry: GraveEntry = { id: nextGraveId(), record }
+    const last = path[path.length - 1]!
     set((s) => ({
       doc: { ...doc, root: root as NbtDocument['root'] },
       graveyard: [...s.graveyard, entry],
+      // Drop markers of the removed subtree; later List siblings shift down.
+      dirty:
+        typeof last === 'number'
+          ? dirtyAfterListRemove(s.dirty, record.parentPath, last)
+          : remapDirtyUnder(s.dirty, record.parentPath, (seg) => (seg === last ? null : seg)),
+      unsaved: true,
     }))
     return record
   },
@@ -225,6 +326,7 @@ export const useNbtStore = create<NbtState>((set, get) => ({
         return {
           doc: { ...doc, root: root as NbtDocument['root'] },
           dirty: withDirty(remapped, dirtyId([...parentPath, to])),
+          unsaved: true,
         }
       })
       return
@@ -234,6 +336,7 @@ export const useNbtStore = create<NbtState>((set, get) => ({
     set((s) => ({
       doc: { ...doc, root: root as NbtDocument['root'] },
       dirty: withDirty(s.dirty, dirtyId([...parentPath, last])),
+      unsaved: true,
     }))
   },
   resurrect: (id) => {
@@ -277,6 +380,7 @@ export const useNbtStore = create<NbtState>((set, get) => ({
     // re-created meanwhile) is caught and surfaced without corrupting the tree.
     try {
       let root: Tag
+      let restoredPath: NbtPath = [...parentPath, key ?? index ?? 0]
       if (key !== undefined) {
         root = addIn(doc.root, parentPath, removed, key)
         // Restore ordinal position within the Compound when known and in range.
@@ -290,12 +394,26 @@ export const useNbtStore = create<NbtState>((set, get) => ({
           root = moveIn(root, [...parentPath, key], index)
         }
       } else {
-        root = addIn(doc.root, parentPath, removed, index)
+        // Siblings may have been deleted since; clamp so the tag still comes
+        // back (at the end) instead of failing with "index out of range".
+        const listLength = parent.type === TagType.List ? parent.value.length : 0
+        const slot = index === undefined ? listLength : Math.min(index, listLength)
+        root = addIn(doc.root, parentPath, removed, slot)
+        restoredPath = [...parentPath, slot]
       }
+      const finalPath = restoredPath
       set((s) => ({
         doc: { ...doc, root: root as NbtDocument['root'] },
         graveyard: s.graveyard.filter((e) => e.id !== id),
         graveyardError: null,
+        // A resurrected tag is an unsaved change: haunt it.
+        dirty: withDirty(
+          typeof finalPath[finalPath.length - 1] === 'number'
+            ? dirtyAfterListInsert(s.dirty, parentPath, finalPath[finalPath.length - 1] as number)
+            : s.dirty,
+          dirtyId(finalPath),
+        ),
+        unsaved: true,
       }))
     } catch (err) {
       set({
@@ -304,5 +422,5 @@ export const useNbtStore = create<NbtState>((set, get) => ({
     }
   },
   clearGraveyardError: () => set({ graveyardError: null }),
-  markExported: () => set({ dirty: new Set<string>() }),
+  markExported: () => set({ dirty: new Set<string>(), unsaved: false }),
 }))

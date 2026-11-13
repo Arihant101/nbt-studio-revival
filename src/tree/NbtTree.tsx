@@ -87,6 +87,13 @@ const emptyContainerCopy: Record<Theme, string> = {
   spooky: '(empty crypt)',
 }
 
+/**
+ * How many children an expanded container renders at first. Region/structure
+ * files can hold Lists with tens of thousands of entries; rendering them all
+ * at once freezes the tab, so larger containers page in with "Show more".
+ */
+export const CHILD_PAGE_SIZE = 200
+
 /** A single entry in the flattened, in-DOM-order list of visible treeitems. */
 interface FlatNode {
   /** The node's path id (data-nbt-path-json / expansion-Set key). */
@@ -113,6 +120,7 @@ function flattenVisible(
   root: Tag,
   rootPath: NbtPath,
   isExpanded: (id: string) => boolean,
+  childLimit: (id: string) => number,
 ): FlatNode[] {
   const out: FlatNode[] = []
   const walk = (tag: Tag, path: NbtPath, depth: number) => {
@@ -121,14 +129,18 @@ function flattenVisible(
     const expanded = container && isExpanded(id)
     out.push({ id, path, depth, container, expanded })
     if (!expanded) return
+    const limit = childLimit(id)
     if (tag.type === TagType.Compound) {
+      let i = 0
       for (const [childKey, childTag] of tag.value.entries()) {
+        if (i++ >= limit) break
         walk(childTag, [...path, childKey], depth + 1)
       }
     } else if (tag.type === TagType.List) {
-      tag.value.forEach((childTag, index) => {
-        walk(childTag, [...path, index], depth + 1)
-      })
+      const n = Math.min(tag.value.length, limit)
+      for (let index = 0; index < n; index++) {
+        walk(tag.value[index]!, [...path, index], depth + 1)
+      }
     }
   }
   walk(root, rootPath, 0)
@@ -145,6 +157,10 @@ interface TreeNav {
   onKeyDown: (e: React.KeyboardEvent) => void
   /** Mark a row as the keyboard-focused one when it receives DOM focus. */
   onRowFocus: (id: string) => void
+  /** How many children of container `id` are currently rendered. */
+  childLimit: (id: string) => number
+  /** Render the next page of children for container `id`. */
+  showMore: (id: string) => void
 }
 
 interface TreeNodeProps {
@@ -354,6 +370,11 @@ function TreeNode({
   )
 }
 
+const showMoreCopy: Record<Theme, (next: number, hidden: number) => string> = {
+  dark: (next, hidden) => `Show ${next} more (${hidden} hidden)`,
+  spooky: (next, hidden) => `Summon ${next} more (${hidden} still buried)`,
+}
+
 function renderChildren(
   tag: Tag,
   path: NbtPath,
@@ -367,8 +388,41 @@ function renderChildren(
   ancestors: Set<string>,
   nav: TreeNav,
 ) {
+  const id = pathId(path)
+  const limit = nav.childLimit(id)
+  const total = tag.type === TagType.Compound ? tag.value.size : tag.type === TagType.List ? tag.value.length : 0
+  const hidden = total - limit
+  const more =
+    hidden > 0 ? (
+      <li key="__more" role="none" className="px-1 py-0.5" style={{ paddingLeft: `${depth * 1}rem` }}>
+        <button
+          type="button"
+          onClick={() => nav.showMore(id)}
+          className="rounded border border-edge px-2 text-accent hover:bg-panel focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          {showMoreCopy[theme](Math.min(CHILD_PAGE_SIZE, hidden), hidden)}
+        </button>
+      </li>
+    ) : null
+  return [...renderChildRows(tag, path, depth, theme, expanded, toggle, dirty, searchActive, matches, ancestors, nav, limit), more]
+}
+
+function renderChildRows(
+  tag: Tag,
+  path: NbtPath,
+  depth: number,
+  theme: Theme,
+  expanded: Set<string>,
+  toggle: (key: string) => void,
+  dirty: Set<string>,
+  searchActive: boolean,
+  matches: Set<string>,
+  ancestors: Set<string>,
+  nav: TreeNav,
+  limit: number,
+) {
   if (tag.type === TagType.Compound) {
-    const entries = [...tag.value.entries()]
+    const entries = [...tag.value.entries()].slice(0, limit)
     return entries.map(([childKey, childTag]) => {
       const childPath: NbtPath = [...path, childKey]
       return (
@@ -392,7 +446,7 @@ function renderChildren(
     })
   }
   if (tag.type === TagType.List) {
-    return tag.value.map((childTag, index) => {
+    return tag.value.slice(0, limit).map((childTag, index) => {
       const childPath: NbtPath = [...path, index]
       return (
         <TreeNode
@@ -414,7 +468,7 @@ function renderChildren(
       )
     })
   }
-  return null
+  return []
 }
 
 export interface NbtTreeProps {
@@ -443,6 +497,16 @@ export function NbtTree({ doc, query = '' }: NbtTreeProps) {
   const [focusedId, setFocusedId] = useState<string>(() => pathId([]))
   // id -> focusable row element, so the keydown handler can move DOM focus.
   const rowRefs = useRef(new Map<string, HTMLElement>())
+  // Per-container render limits for paging large containers (see CHILD_PAGE_SIZE).
+  const [limits, setLimits] = useState<Map<string, number>>(() => new Map())
+  const childLimit = useCallback((id: string) => limits.get(id) ?? CHILD_PAGE_SIZE, [limits])
+  const showMore = useCallback((id: string) => {
+    setLimits((prev) => {
+      const next = new Map(prev)
+      next.set(id, (prev.get(id) ?? CHILD_PAGE_SIZE) + CHILD_PAGE_SIZE)
+      return next
+    })
+  }, [])
 
   const toggle = useCallback((key: string) => {
     setExpanded((prev) => {
@@ -481,8 +545,8 @@ export function NbtTree({ doc, query = '' }: NbtTreeProps) {
   // render recursion). Memoized so the keydown handler and the roving-target
   // reconciliation below share one walk per render.
   const flat = useMemo(
-    () => flattenVisible(doc.root, rootPath, isEffectivelyExpanded),
-    [doc, isEffectivelyExpanded],
+    () => flattenVisible(doc.root, rootPath, isEffectivelyExpanded, childLimit),
+    [doc, isEffectivelyExpanded, childLimit],
   )
 
   // Reconcile the roving tab stop against the visible set. `focusedId` is kept
@@ -621,7 +685,14 @@ export function NbtTree({ doc, query = '' }: NbtTreeProps) {
   // The nav context carries the EFFECTIVE (reconciled) id for the tabIndex
   // assignment so a tabbable row always exists even when the raw focusedId's
   // row has unmounted. The keydown logic above still reads the raw focusedId.
-  const nav: TreeNav = { focusedId: effectiveFocusedId, registerRow, onKeyDown, onRowFocus }
+  const nav: TreeNav = {
+    focusedId: effectiveFocusedId,
+    registerRow,
+    onKeyDown,
+    onRowFocus,
+    childLimit,
+    showMore,
+  }
 
   return (
     <ul

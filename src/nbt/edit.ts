@@ -54,6 +54,18 @@ function isList(tag: Tag): tag is ListTag {
   return tag.type === TagType.List
 }
 
+const TYPE_NAMES: Record<number, string> = Object.fromEntries(
+  Object.entries(TagType).map(([name, id]) => [id, name]),
+)
+
+/** Readable name for a tag type id (e.g. 3 -> "Int"). */
+export function tagTypeName(type: number): string {
+  return TYPE_NAMES[type] ?? `Unknown(${type})`
+}
+
+const I64_MIN = -(2n ** 63n)
+const I64_MAX = 2n ** 63n - 1n
+
 function describePath(path: NbtPath): string {
   return path.length === 0 ? '<root>' : path.map((s) => String(s)).join('/')
 }
@@ -176,10 +188,15 @@ export function setValueIn(root: Tag, path: NbtPath, value: ScalarValue): Tag {
         if (typeof value !== 'number') {
           throw new Error(`Tag at ${describePath(path)} expects a number value`)
         }
-        return { type: tag.type, value }
+        // Store floats at 32-bit precision so the UI shows exactly what will
+        // be saved (otherwise 0.1 displays as 0.1 but reloads as 0.10000000149).
+        return { type: tag.type, value: tag.type === TagType.Float ? Math.fround(value) : value }
       case TagType.Long:
         if (typeof value !== 'bigint') {
           throw new Error(`Long tag at ${describePath(path)} expects a bigint value`)
+        }
+        if (value < I64_MIN || value > I64_MAX) {
+          throw new Error(`Long tag at ${describePath(path)} value ${value} is out of range for i64`)
         }
         return { type: tag.type, value }
       case TagType.String:
@@ -271,7 +288,7 @@ export function addIn(
     if (isList(parent)) {
       if (parent.value.length > 0 && tag.type !== parent.elementType) {
         throw new Error(
-          `Cannot add a tag of type ${tag.type} to a List at ${describePath(parentPath)} whose elementType is ${parent.elementType}`,
+          `Cannot add a ${tagTypeName(tag.type)} to a List of ${tagTypeName(parent.elementType)} at ${describePath(parentPath)} (NBT lists hold one type)`,
         )
       }
       const newArr = parent.value.slice()

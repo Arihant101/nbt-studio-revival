@@ -379,9 +379,14 @@ export function AddChildControl({ path, container, label, theme }: AddChildContr
 
   const isCompound = container.type === TagType.Compound
   const name = accessibleName(`Add child to ${label}`, path)
+  // NBT Lists hold a single type: once a List has elements, only that type can
+  // be added, so offer just that instead of letting every other pick fail.
+  const lockedType =
+    container.type === TagType.List && container.value.length > 0 ? container.elementType : null
+  const typeOptions = lockedType !== null ? [lockedType] : ADDABLE_TAG_TYPES
 
   function beginAdd() {
-    setType(TagType.Byte)
+    setType(lockedType ?? TagType.Byte)
     setKeyDraft('')
     setError(null)
     setOpen(true)
@@ -434,7 +439,7 @@ export function AddChildControl({ path, container, label, theme }: AddChildContr
         onChange={(e) => setType(Number(e.target.value) as TagType)}
         className={`rounded border border-edge bg-bg px-1 font-mono text-fg focus:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
       >
-        {ADDABLE_TAG_TYPES.map((t) => (
+        {typeOptions.map((t) => (
           <option key={t} value={t}>
             {sigil(t, theme)} {tagTypeInfo(t).label}
           </option>
