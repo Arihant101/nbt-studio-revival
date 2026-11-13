@@ -1,4 +1,5 @@
 import { TagType, type Tag } from './types'
+import { MAX_DEPTH } from './limits'
 
 // SNBT (stringified NBT) parser + pretty printer.
 //
@@ -53,9 +54,25 @@ function looksNumeric(value: string): boolean {
 /** Render a 32-bit float / 64-bit double so it parses back to the same value. */
 function numberToText(value: number): string {
   if (Number.isNaN(value)) return 'NaN'
+  // String(-0) is "0", which would silently drop the sign bit.
+  if (Object.is(value, -0)) return '-0.0'
   if (value === Infinity) return 'Infinity'
   if (value === -Infinity) return '-Infinity'
   return String(value)
+}
+
+/**
+ * Shortest decimal text that still reads back as the same 32-bit float, so a
+ * float 0.1 prints as "0.1f" rather than "0.10000000149011612f".
+ */
+function floatToText(value: number): string {
+  if (!Number.isFinite(value) || Object.is(value, -0)) return numberToText(value)
+  const f = Math.fround(value)
+  for (let digits = 1; digits <= 17; digits++) {
+    const text = String(Number(f.toPrecision(digits)))
+    if (Math.fround(Number(text)) === f) return text
+  }
+  return String(f)
 }
 
 export function serializeSnbt(tag: Tag): string {
@@ -69,7 +86,7 @@ export function serializeSnbt(tag: Tag): string {
     case TagType.Long:
       return `${tag.value.toString()}L`
     case TagType.Float:
-      return `${numberToText(tag.value)}f`
+      return `${floatToText(tag.value)}f`
     case TagType.Double: {
       const text = numberToText(tag.value)
       // Ensure doubles always carry a decimal point or suffix so they never
@@ -103,6 +120,7 @@ export function serializeSnbt(tag: Tag): string {
 class SnbtParser {
   private readonly text: string
   private pos = 0
+  private depth = 0
 
   constructor(text: string) {
     this.text = text
@@ -140,8 +158,15 @@ class SnbtParser {
   private parseValue(): Tag {
     this.skipWhitespace()
     const ch = this.peek()
-    if (ch === '{') return this.parseCompound()
-    if (ch === '[') return this.parseListOrArray()
+    if (ch === '{' || ch === '[') {
+      if (this.depth >= MAX_DEPTH) this.error(`Nesting deeper than ${MAX_DEPTH} levels`)
+      this.depth++
+      try {
+        return ch === '{' ? this.parseCompound() : this.parseListOrArray()
+      } finally {
+        this.depth--
+      }
+    }
     if (ch === '"' || ch === "'") {
       return { type: TagType.String, value: this.parseQuotedString() }
     }
@@ -284,7 +309,16 @@ class SnbtParser {
       }
       this.error("Expected ',' or ']'")
     }
+    // NBT lists are homogeneous: a mixed list like [1,"a"] cannot be written
+    // to binary, so reject it here instead of producing a corrupt file later.
     const elementType = items[0]!.type
+    items.forEach((item, i) => {
+      if (item.type !== elementType) {
+        this.error(
+          `List elements must all share one type (element 0 is ${TYPE_NAMES[elementType]}, element ${i} is ${TYPE_NAMES[item.type]})`,
+        )
+      }
+    })
     return { type: TagType.List, elementType, value: items }
   }
 
@@ -323,11 +357,23 @@ class SnbtParser {
     }
     if (this.pos === start) this.error('Unexpected character')
     const token = this.text.slice(start, this.pos)
-    const numeric = parseNumericToken(token)
+    let numeric: Tag | null
+    try {
+      numeric = parseNumericToken(token)
+    } catch (err) {
+      // Report range errors at the token's position so the cursed-file UI can
+      // point at the exact spot.
+      this.pos = start
+      this.error(err instanceof Error ? err.message : String(err))
+    }
     if (numeric) return numeric
     return { type: TagType.String, value: token }
   }
 }
+
+const TYPE_NAMES: Record<number, string> = Object.fromEntries(
+  Object.entries(TagType).map(([name, id]) => [id, name]),
+)
 
 // Integer with optional byte/short/long suffix.
 const BYTE_RE = /^[+-]?\d+[bB]$/
@@ -366,11 +412,15 @@ function parseNumericToken(token: string): Tag | null {
   if (SPECIAL_DOUBLE_RE.test(token)) {
     return { type: TagType.Double, value: specialValue(token) }
   }
+  // Minecraft's SNBT reads the bare words true/false as bytes 1b/0b.
+  if (token === 'true' || token === 'false') {
+    return { type: TagType.Byte, value: token === 'true' ? 1 : 0 }
+  }
   if (BYTE_RE.test(token)) {
-    return { type: TagType.Byte, value: toInt8(parseInt(token.slice(0, -1), 10)) }
+    return { type: TagType.Byte, value: checkedInt(token, token.slice(0, -1), -128, 127, 'Byte') }
   }
   if (SHORT_RE.test(token)) {
-    return { type: TagType.Short, value: toInt16(parseInt(token.slice(0, -1), 10)) }
+    return { type: TagType.Short, value: checkedInt(token, token.slice(0, -1), -32768, 32767, 'Short') }
   }
   if (LONG_RE.test(token)) {
     const value = BigInt(token.slice(0, -1))
@@ -385,7 +435,7 @@ function parseNumericToken(token: string): Tag | null {
   // it also matches a bare integer. Reordering would reclassify every int as a
   // double.
   if (INT_RE.test(token)) {
-    return { type: TagType.Int, value: toInt32(parseInt(token, 10)) }
+    return { type: TagType.Int, value: checkedInt(token, token, -2147483648, 2147483647, 'Int') }
   }
   if (FLOAT_RE.test(token)) {
     return { type: TagType.Float, value: Math.fround(parseFloat(token.slice(0, -1))) }
@@ -399,16 +449,17 @@ function parseNumericToken(token: string): Tag | null {
   return null
 }
 
-function toInt8(n: number): number {
-  return (n << 24) >> 24
-}
-
-function toInt16(n: number): number {
-  return (n << 16) >> 16
-}
-
-function toInt32(n: number): number {
-  return n | 0
+/**
+ * Parse an integer literal and reject it when out of range. Silently wrapping
+ * (e.g. 200b becoming -56b) would corrupt the user's data without warning.
+ * BigInt keeps huge literals exact so the range check itself never rounds.
+ */
+function checkedInt(token: string, digits: string, min: number, max: number, name: string): number {
+  const value = BigInt(digits)
+  if (value < BigInt(min) || value > BigInt(max)) {
+    throw new Error(`${name} literal ${token} is out of range [${min}, ${max}]`)
+  }
+  return Number(value)
 }
 
 export function parseSnbt(text: string): Tag {

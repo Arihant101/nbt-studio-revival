@@ -6,7 +6,7 @@ import { NbtTree } from './tree/NbtTree'
 import { Graveyard } from './tree/Graveyard'
 import { sampleDocument } from './tree/sampleDocument'
 import { computeMatches } from './tree/searchMatch'
-import { importFile } from './import/importFile'
+import { ACCEPTED_EXTENSIONS, importFile } from './import/importFile'
 import { parseErrorLocation } from './import/parseErrorLocation'
 import type { ParseErrorLocation } from './import/parseErrorLocation'
 import { exportDocument } from './export/exportFile'
@@ -160,7 +160,7 @@ export default function App() {
             {spooky ? '📂 Import' : 'Import'}
             <input
               type="file"
-              accept=".nbt,.dat,.snbt"
+              accept={ACCEPTED_EXTENSIONS}
               aria-label="Import NBT file"
               onChange={(e) => {
                 void handleFiles(e.target.files)

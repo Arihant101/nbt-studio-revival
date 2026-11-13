@@ -224,7 +224,11 @@ describe('SNBT round-trip', () => {
 
     // Unquoted non-numeric tokens are strings, not numbers.
     expect(parseSnbt('foo')).toEqual({ type: TagType.String, value: 'foo' })
-    expect(parseSnbt('true')).toEqual({ type: TagType.String, value: 'true' })
+    // Minecraft reads bare true/false as bytes; quoted they stay strings.
+    expect(parseSnbt('true')).toEqual({ type: TagType.Byte, value: 1 })
+    expect(parseSnbt('false')).toEqual({ type: TagType.Byte, value: 0 })
+    expect(parseSnbt('"true"')).toEqual({ type: TagType.String, value: 'true' })
+    expect(serializeSnbt({ type: TagType.String, value: 'true' })).toBe('"true"')
 
     // Typed arrays map to the correct container type.
     expect(parseSnbt('[B;1b,2b]')).toEqual({
@@ -331,12 +335,11 @@ describe('SNBT round-trip', () => {
     // An unsuffixed Int element out of [-128, 127] throws instead of silently
     // wrapping via the Int8Array (e.g. [B;200] must not quietly become -56).
     expect(() => parseSnbt('[B;200]')).toThrow()
-    // A suffixed byte literal (200b) legitimately wraps to -56 at the token
-    // level, matching the i8 wrapping convention used everywhere else.
-    expect(parseSnbt('[B;200b]')).toEqual({
-      type: TagType.ByteArray,
-      value: new Int8Array([-56]),
-    })
+    // Suffixed literals are range-checked too: 200b must not wrap to -56.
+    expect(() => parseSnbt('[B;200b]')).toThrow(/out of range/)
+    expect(() => parseSnbt('200b')).toThrow(/out of range/)
+    expect(() => parseSnbt('40000s')).toThrow(/out of range/)
+    expect(() => parseSnbt('3000000000')).toThrow(/out of range/)
     // In-range byte-array elements still parse.
     expect(parseSnbt('[B;127b,-128b]')).toEqual({
       type: TagType.ByteArray,
