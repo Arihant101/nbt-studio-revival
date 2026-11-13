@@ -368,6 +368,27 @@ describe('<NbtTree> inline editing', () => {
     expect(screen.queryByRole('button', { name: 'Edit value of count' })).toBeNull()
   })
 
+  it('does not hijack arrow/Enter keys while typing in an inline leaf editor', () => {
+    renderStoreTree()
+    // Open the intTag value editor and type a new value.
+    fireEvent.click(screen.getByRole('button', { name: 'Edit value of intTag (intTag)' }))
+    const input = screen.getByRole('textbox', { name: 'Value for intTag (intTag)' }) as HTMLInputElement
+    fireEvent.change(input, { target: { value: '100' } })
+
+    // An ArrowRight inside the input must NOT be swallowed by the tree handler
+    // (which would expand/collapse or move focus). The input stays open and the
+    // value is intact; then Enter still commits via the editor's own handler.
+    fireEvent.keyDown(input, { key: 'ArrowRight' })
+    expect(screen.getByRole('textbox', { name: 'Value for intTag (intTag)' })).toBeTruthy()
+    expect(input.value).toBe('100')
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(getIn(useNbtStore.getState().doc!.root, ['intTag'])).toEqual({
+      type: TagType.Int,
+      value: 100,
+    })
+  })
+
   it('writes the store exactly once when Enter commit is followed by the unmount blur', () => {
     // Wrap setValue with a counting spy BEFORE render so the component captures
     // the spied reference (it reads the action once via the selector).
@@ -395,5 +416,171 @@ describe('<NbtTree> inline editing', () => {
       type: TagType.Int,
       value: 100,
     })
+  })
+})
+
+describe('<NbtTree> keyboard navigation', () => {
+  function row(path: string): HTMLElement {
+    return document.querySelector(`[data-nbt-path="${path}"]`) as HTMLElement
+  }
+  // The roving-focus element of a row: the toggle button for a container, or
+  // the row <div> (tabIndex set) for a leaf.
+  function focusable(path: string): HTMLElement {
+    const node = row(path)
+    const btn = node.querySelector(':scope > div > button[aria-expanded]')
+    if (btn) return btn as HTMLElement
+    return node.querySelector(':scope > div[tabindex]') as HTMLElement
+  }
+
+  it('exposes WAI-ARIA tree roles: tree, treeitem, group, aria-level', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    const tree = screen.getByRole('tree', { name: /NBT tree for Level/ })
+    expect(tree).toBeTruthy()
+    // Root treeitem is a container with aria-expanded and aria-level 1.
+    const rootItem = row('') 
+    expect(rootItem.getAttribute('role')).toBe('treeitem')
+    expect(rootItem.getAttribute('aria-level')).toBe('1')
+    expect(rootItem.getAttribute('aria-expanded')).toBe('true')
+    // The expanded root exposes a role=group child list.
+    expect(rootItem.querySelector(':scope > ul[role="group"]')).not.toBeNull()
+    // A leaf treeitem is level 2 and has no aria-expanded.
+    const intTag = row('intTag')
+    expect(intTag.getAttribute('role')).toBe('treeitem')
+    expect(intTag.getAttribute('aria-level')).toBe('2')
+    expect(intTag.getAttribute('aria-expanded')).toBeNull()
+  })
+
+  it('keeps exactly one treeitem in the tab order (roving tabindex)', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    // Root (default focused) is the only row with tabIndex 0.
+    expect(focusable('').getAttribute('tabindex')).toBe('0')
+    expect(focusable('intTag').getAttribute('tabindex')).toBe('-1')
+    expect(focusable('intList').getAttribute('tabindex')).toBe('-1')
+
+    // Move focus to the first child via an ArrowDown step; the tab stop follows.
+    const rootEl = focusable('')
+    rootEl.focus()
+    fireEvent.keyDown(rootEl, { key: 'ArrowDown' })
+    const firstChild = focusable('byteTag')
+    expect(firstChild.getAttribute('tabindex')).toBe('0')
+    expect(focusable('').getAttribute('tabindex')).toBe('-1')
+    expect(document.activeElement).toBe(firstChild)
+  })
+
+  it('ArrowRight on a focused collapsed container expands it', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    const nested = row('nested')
+    const toggle = within(nested).getAllByRole('button')[0]
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(row('nested/label')).toBeNull()
+
+    // The key event originates at the focused row element and bubbles to the
+    // tree-level handler, exactly as in a real keyboard interaction.
+    toggle.focus()
+    fireEvent.keyDown(toggle, { key: 'ArrowRight' })
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(row('nested/label')).not.toBeNull()
+  })
+
+  it('ArrowRight on an already-expanded container moves focus to its first child', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    const intList = row('intList')
+    const toggle = within(intList).getAllByRole('button')[0]
+    // Expand first.
+    toggle.focus()
+    fireEvent.keyDown(toggle, { key: 'ArrowRight' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    // ArrowRight again: focus moves to the first child (intList/0).
+    fireEvent.keyDown(toggle, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(focusable('intList/0'))
+  })
+
+  it('ArrowLeft on an expanded container collapses it', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    const nested = row('nested')
+    const toggle = within(nested).getAllByRole('button')[0]
+    toggle.focus()
+    // Expand, then collapse with ArrowLeft.
+    fireEvent.keyDown(toggle, { key: 'ArrowRight' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(row('nested/label')).not.toBeNull()
+
+    fireEvent.keyDown(toggle, { key: 'ArrowLeft' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(row('nested/label')).toBeNull()
+  })
+
+  it('ArrowLeft on a leaf moves focus to its parent container', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    // Expand intList and focus its first child.
+    const intList = row('intList')
+    const toggle = within(intList).getAllByRole('button')[0]
+    toggle.focus()
+    fireEvent.keyDown(toggle, { key: 'ArrowRight' })
+    fireEvent.keyDown(toggle, { key: 'ArrowRight' })
+    const firstChild = focusable('intList/0')
+    expect(document.activeElement).toBe(firstChild)
+
+    // ArrowLeft on the leaf steps back up to intList.
+    fireEvent.keyDown(firstChild, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(toggle)
+  })
+
+  it('Enter toggles a focused container', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    const nested = row('nested')
+    const toggle = within(nested).getAllByRole('button')[0]
+    toggle.focus()
+    fireEvent.keyDown(toggle, { key: 'Enter' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.keyDown(toggle, { key: 'Enter' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('Space toggles a focused container', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    const nested = row('nested')
+    const toggle = within(nested).getAllByRole('button')[0]
+    toggle.focus()
+    fireEvent.keyDown(toggle, { key: ' ' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('ArrowDown and ArrowUp move focus between visible nodes', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    const rootEl = focusable('')
+    rootEl.focus()
+    // Down from root -> first child (byteTag).
+    fireEvent.keyDown(rootEl, { key: 'ArrowDown' })
+    const byteTag = focusable('byteTag')
+    expect(document.activeElement).toBe(byteTag)
+    // Down again -> shortTag.
+    fireEvent.keyDown(byteTag, { key: 'ArrowDown' })
+    const shortTag = focusable('shortTag')
+    expect(document.activeElement).toBe(shortTag)
+    // Up -> back to byteTag.
+    fireEvent.keyDown(shortTag, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(focusable('byteTag'))
+  })
+
+  it('Home and End jump to the first and last visible node', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    const byteTag = focusable('byteTag')
+    byteTag.focus()
+    fireEvent.keyDown(byteTag, { key: 'End' })
+    // Last visible node is the final root child (nested, collapsed).
+    expect(document.activeElement).toBe(focusable('nested'))
+    fireEvent.keyDown(focusable('nested'), { key: 'Home' })
+    expect(document.activeElement).toBe(focusable(''))
+  })
+
+  it('mouse toggling still works alongside keyboard navigation', () => {
+    render(<NbtTree doc={sampleDocument()} />)
+    const nested = row('nested')
+    const toggle = within(nested).getAllByRole('button')[0]
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(row('nested/label')).not.toBeNull()
   })
 })
