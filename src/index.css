@@ -87,6 +87,35 @@
   }
 }
 
+/* Cursed-file crack marker (Task 10, increment D). The located parse-error line
+   shows a STATIC marker glyph (🩸 in spooky mode) plus the "at character N"
+   text, so the location is perceivable without motion and in both themes. The
+   .nbt-crack class layers ONLY a soft danger-colored pulse, gated behind
+   prefers-reduced-motion: no-preference and mirroring the .nbt-caret /
+   .nbt-haunted / .nbt-lantern pattern, so reduced-motion users keep the static
+   marker with no animation. Color references the theme token var (--danger),
+   never raw hex, keeping WCAG AA contrast in both themes. */
+.nbt-crack {
+  display: inline-flex;
+  align-items: center;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .nbt-crack {
+    animation: nbt-crack-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes nbt-crack-pulse {
+    0%,
+    100% {
+      text-shadow: 0 0 0 transparent;
+      opacity: 1;
+    }
+    50% {
+      text-shadow: 0 0 6px var(--danger);
+      opacity: 0.7;
+    }
+  }
+}
+
 /* Séance search match highlight (Task 10, increment C). The matching row is
    given a STATIC accent ring + accent text by Tailwind token utilities in the
    markup (ring-1 ring-accent text-accent), so matches are perceivable without

@@ -5,6 +5,8 @@ import { NbtTree } from './tree/NbtTree'
 import { Graveyard } from './tree/Graveyard'
 import { sampleDocument } from './tree/sampleDocument'
 import { importFile } from './import/importFile'
+import { parseErrorLocation } from './import/parseErrorLocation'
+import type { ParseErrorLocation } from './import/parseErrorLocation'
 import { exportDocument } from './export/exportFile'
 import type { ExportFormat } from './export/exportFile'
 import { triggerDownload } from './export/download'
@@ -33,6 +35,27 @@ const searchClearCopy: Record<'dark' | 'spooky', string> = {
   spooky: 'Snuff the lantern (clear search)',
 }
 
+// Cursed file (Task 10, increment D). A failed import surfaces the parser's
+// message AND, when the SNBT parser reported a character offset, a prominent
+// located line. Themed copy/markers route through these maps rather than
+// ad-hoc ternaries. In spooky mode the located line carries a "cracked" marker
+// glyph at the bad spot; in dark mode it is a plain "Parse error at character N".
+type ImportError = { message: string; location: ParseErrorLocation }
+
+// Leading marker glyph for the located line. Static (no animation) so it stays
+// perceivable under prefers-reduced-motion; the optional pulse is layered via
+// the .nbt-crack class, gated in index.css.
+const crackMarkerCopy: Record<'dark' | 'spooky', string> = {
+  dark: '',
+  spooky: '🩸 ',
+}
+// Build the located-offset sentence for a known character position.
+function locatedCopy(theme: 'dark' | 'spooky', position: number): string {
+  return theme === 'spooky'
+    ? `╳ cracked here — parse error at character ${position}`
+    : `Parse error at character ${position}`
+}
+
 export default function App() {
   const fileName = useNbtStore((s) => s.fileName)
   const doc = useNbtStore((s) => s.doc)
@@ -44,7 +67,7 @@ export default function App() {
   // Local UI state for import: whether a file is currently dragged over the app
   // (drives the 'drop here' visual) and the latest import error message.
   const [dragOver, setDragOver] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<ImportError | null>(null)
   // Séance search query. View-local (never persisted in the store); threaded
   // into NbtTree which highlights matches and force-expands their ancestors.
   const [search, setSearch] = useState('')
@@ -64,7 +87,11 @@ export default function App() {
       load(file.name, imported)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      // Keep the original parser message (the existing role=alert contract) and
+      // derive the located character offset for the cursed-file surface. A
+      // failed import never calls load, so any previously-loaded doc is intact.
+      const message = err instanceof Error ? err.message : String(err)
+      setError({ message, location: parseErrorLocation(err) })
     }
   }
 
@@ -82,7 +109,8 @@ export default function App() {
       markExported()
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      const message = err instanceof Error ? err.message : String(err)
+      setError({ message, location: { kind: 'none' } })
     }
   }
 
@@ -155,9 +183,19 @@ export default function App() {
         {spooky ? 'The dead NBT editor, raised from the grave.' : 'A browser-based NBT editor for Minecraft Java Edition.'}
       </p>
       {error !== null && (
-        <p role="alert" className="mt-4 rounded border border-danger px-3 py-2 text-danger">
-          {error}
-        </p>
+        <div role="alert" className="mt-4 rounded border border-danger px-3 py-2 text-danger">
+          <p>{error.message}</p>
+          {error.location.kind === 'position' && (
+            <p className="mt-1 flex items-center gap-1 text-danger">
+              {spooky && (
+                <span className="nbt-crack" aria-hidden="true">
+                  {crackMarkerCopy[theme]}
+                </span>
+              )}
+              <span className="font-bold">{locatedCopy(theme, error.location.position)}</span>
+            </p>
+          )}
+        </div>
       )}
       {doc ? (
         <>

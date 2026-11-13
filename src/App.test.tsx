@@ -70,6 +70,24 @@ describe('App import: drag-and-drop', () => {
   })
 })
 
+describe('App import: cursed file surfaces the parse location', () => {
+  it('shows a role=alert with the located character offset and does not load', async () => {
+    render(<App />)
+    // '{a:1}' parses as a valid Compound, then the trailing 'trailing' makes
+    // the SNBT parser throw 'Unexpected trailing characters at position 5'.
+    dropFiles([new File(['{a:1}trailing'], 'cursed.snbt')])
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.className).toContain('text-danger')
+    // The original parser message is preserved (existing contract).
+    expect(alert.textContent).toContain('trailing characters')
+    // The located character offset is surfaced prominently.
+    expect(alert.textContent).toContain('character 5')
+    // A failed import never loads a doc.
+    expect(useNbtStore.getState().doc).toBeNull()
+  })
+})
+
 describe('App export: control presence', () => {
   it('does not render the export buttons when no document is loaded', () => {
     render(<App />)
