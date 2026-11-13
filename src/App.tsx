@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Analytics } from '@vercel/analytics/react'
 import { useNbtStore } from './store/useNbtStore'
 import { useThemeStore } from './store/useThemeStore'
 import { NbtTree } from './tree/NbtTree'
@@ -116,7 +117,9 @@ export default function App() {
   }
 
   return (
-    <main
+    <>
+      <Analytics />
+      <main
       className="min-h-screen bg-bg p-8 font-mono text-fg"
       onDragOver={(e) => {
         // Prevent the browser from navigating to the dropped file and show the
@@ -235,5 +238,6 @@ export default function App() {
         </section>
       )}
     </main>
+    </>
   )
 }
