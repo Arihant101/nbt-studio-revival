@@ -70,6 +70,24 @@ describe('App import: drag-and-drop', () => {
   })
 })
 
+describe('App export: control presence', () => {
+  it('does not render the export buttons when no document is loaded', () => {
+    render(<App />)
+    expect(screen.queryByRole('button', { name: /Export \.nbt/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Export \.snbt/ })).toBeNull()
+  })
+
+  it('renders keyboard-accessible export buttons after a document loads', () => {
+    useNbtStore.getState().load('sample.nbt', sampleDocument())
+    render(<App />)
+
+    const binary = screen.getByRole('button', { name: /Export \.nbt/ })
+    const snbt = screen.getByRole('button', { name: /Export \.snbt/ })
+    expect(binary.tagName).toBe('BUTTON')
+    expect(snbt.tagName).toBe('BUTTON')
+  })
+})
+
 describe('App import: failed import keeps the previous doc', () => {
   it('shows an error and leaves a previously-loaded doc intact on a corrupted import', async () => {
     // Seed a known-good doc first.

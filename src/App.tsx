@@ -4,6 +4,9 @@ import { useThemeStore } from './store/useThemeStore'
 import { NbtTree } from './tree/NbtTree'
 import { sampleDocument } from './tree/sampleDocument'
 import { importFile } from './import/importFile'
+import { exportDocument } from './export/exportFile'
+import type { ExportFormat } from './export/exportFile'
+import { triggerDownload } from './export/download'
 
 // Theme-aware copy for the empty-state drop zone, consolidated here rather than
 // scattered as ad-hoc ternaries throughout the JSX.
@@ -37,6 +40,20 @@ export default function App() {
     try {
       const imported = await importFile(file)
       load(file.name, imported)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // Export the current doc in the chosen format and trigger a browser download.
+  // Read-only over the doc: it is never mutated here, and a failure surfaces the
+  // serializer/download error without altering the loaded document.
+  async function handleExport(format: ExportFormat) {
+    if (doc === null) return
+    try {
+      const result = await exportDocument(doc, fileName, format)
+      triggerDownload(result)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -82,6 +99,24 @@ export default function App() {
           >
             {spooky ? '🪦 Load sample' : 'Load sample'}
           </button>
+          {doc && (
+            <>
+              <button
+                onClick={() => void handleExport('binary')}
+                aria-label="Export .nbt"
+                className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent"
+              >
+                {spooky ? '🧟 Export .nbt' : 'Export .nbt'}
+              </button>
+              <button
+                onClick={() => void handleExport('snbt')}
+                aria-label="Export .snbt"
+                className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent"
+              >
+                {spooky ? '🧟 Export .snbt' : 'Export .snbt'}
+              </button>
+            </>
+          )}
           <button
             onClick={toggle}
             className="rounded border border-edge bg-panel px-3 py-1 text-sm hover:border-accent"
