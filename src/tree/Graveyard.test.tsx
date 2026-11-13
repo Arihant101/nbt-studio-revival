@@ -34,6 +34,28 @@ describe('Graveyard panel', () => {
     expect(container.firstChild).toBeNull()
   })
 
+  it('shows the themed empty-graveyard copy using the muted token when nothing is deleted', () => {
+    useNbtStore.getState().load('sample.nbt', sampleDocument())
+
+    render(<Graveyard />)
+
+    // Dark-theme empty copy renders with the muted semantic token.
+    const empty = screen.getByText('Nothing deleted yet.')
+    expect(empty).toBeTruthy()
+    expect(empty.className).toContain('text-muted')
+  })
+
+  it('shows the themed empty-graveyard copy in the spooky theme', () => {
+    useThemeStore.setState({ theme: 'spooky' })
+    useNbtStore.getState().load('sample.nbt', sampleDocument())
+
+    render(<Graveyard />)
+
+    const empty = screen.getByText('The graveyard is empty… for now.')
+    expect(empty).toBeTruthy()
+    expect(empty.className).toContain('text-muted')
+  })
+
   it('shows a deleted tag with a path-qualified Resurrect button and restores it on click', () => {
     useNbtStore.getState().load('sample.nbt', sampleDocument())
     // Delete a nested leaf so the button's accessible name is path-qualified.

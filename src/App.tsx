@@ -4,6 +4,7 @@ import { useThemeStore } from './store/useThemeStore'
 import { NbtTree } from './tree/NbtTree'
 import { Graveyard } from './tree/Graveyard'
 import { sampleDocument } from './tree/sampleDocument'
+import { computeMatches } from './tree/searchMatch'
 import { importFile } from './import/importFile'
 import { parseErrorLocation } from './import/parseErrorLocation'
 import type { ParseErrorLocation } from './import/parseErrorLocation'
@@ -33,6 +34,15 @@ const searchLabelCopy: Record<'dark' | 'spooky', string> = {
 const searchClearCopy: Record<'dark' | 'spooky', string> = {
   dark: 'Clear search',
   spooky: 'Snuff the lantern (clear search)',
+}
+// Empty-state copy when an active séance search yields zero matches. Each line
+// names the actionable next step (clear the search), which the always-present
+// Clear button performs. Rendered with the text-muted semantic token because
+// this is an empty state, not an error. Routed through a copy map (never
+// ad-hoc ternaries), mirroring the other search copy maps above.
+const searchNoMatchCopy: Record<'dark' | 'spooky', string> = {
+  dark: 'No matches — clear the search to see all tags',
+  spooky: 'The séance found nothing — snuff the lantern to see all tags',
 }
 
 // Cursed file (Task 10, increment D). A failed import surfaces the parser's
@@ -76,6 +86,15 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme
   }, [theme])
+
+  // Séance no-match detection. When a doc is loaded and the search query is
+  // active (non-empty after trim) but yields zero matches, show a themed
+  // muted empty-state message. Reuses computeMatches (the SAME matcher the
+  // tree uses) rather than duplicating matching logic.
+  const normalizedQuery = search.trim().toLowerCase()
+  const searchActive = normalizedQuery !== ''
+  const hasNoMatches =
+    doc !== null && searchActive && computeMatches(doc.root, normalizedQuery).matches.size === 0
 
   // Import the first file from a picker/drop. On success route it through the
   // store's load so the existing NbtTree renders it; on failure surface the
@@ -221,6 +240,9 @@ export default function App() {
                 {spooky ? '🔦 Clear' : 'Clear'}
               </button>
             </div>
+            {hasNoMatches && (
+              <p className="mb-3 text-muted">{searchNoMatchCopy[theme]}</p>
+            )}
             <NbtTree doc={doc} query={search} />
           </section>
           <Graveyard />

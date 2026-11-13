@@ -72,6 +72,69 @@ function withDirty(prev: Set<string>, id: string): Set<string> {
   return next
 }
 
+/**
+ * Map a List child index to its new index after a reorder that splices the
+ * element out at `from` and back in at `to` (the exact operation moveIn
+ * performs). The moved element follows to `to`; elements between `from` and
+ * `to` shift by one toward the vacated slot; everything else is unchanged.
+ */
+function remapListIndex(i: number, from: number, to: number): number {
+  if (i === from) return to
+  if (from < to) return i > from && i <= to ? i - 1 : i
+  // from > to
+  return i >= to && i < from ? i + 1 : i
+}
+
+/**
+ * Rebuild the haunted/dirty Set after a List reorder so each dirty id that
+ * points at (or passes through) a sibling index under `parentPath` follows its
+ * element to its new index. Dirty ids that are not direct numeric children of
+ * the moved List parent (Compound-keyed ids, ids under other containers, or ids
+ * whose segment at the parent's depth is not a number) are left byte-for-byte
+ * unchanged. Re-serialization uses the same JSON.stringify form as dirtyId so
+ * ids keep matching NbtTree's pathId.
+ */
+function remapListDirtyOnMove(
+  dirty: Set<string>,
+  parentPath: NbtPath,
+  from: number,
+  to: number,
+): Set<string> {
+  const depth = parentPath.length
+  const next = new Set<string>()
+  for (const id of dirty) {
+    let path: unknown
+    try {
+      path = JSON.parse(id)
+    } catch {
+      next.add(id)
+      continue
+    }
+    // Only remap ids that are arrays reaching at least to the sibling index and
+    // that sit directly under the moved List's parentPath.
+    if (!Array.isArray(path) || path.length <= depth) {
+      next.add(id)
+      continue
+    }
+    let underParent = true
+    for (let i = 0; i < depth; i += 1) {
+      if (path[i] !== parentPath[i]) {
+        underParent = false
+        break
+      }
+    }
+    const indexSeg = path[depth]
+    if (!underParent || typeof indexSeg !== 'number') {
+      next.add(id)
+      continue
+    }
+    const remapped = path.slice()
+    remapped[depth] = remapListIndex(indexSeg, from, to)
+    next.add(JSON.stringify(remapped))
+  }
+  return next
+}
+
 // Monotonic counter for GraveEntry ids. Module-scoped so ids stay unique across
 // the store's lifetime (and never collide after load/clear resets the list).
 let graveSeq = 0
@@ -153,11 +216,24 @@ export const useNbtStore = create<NbtState>((set, get) => ({
     // (only its ordinal shifts), so the path stays `parentPath + key`.
     const parentPath = path.slice(0, -1) as NbtPath
     const last = path[path.length - 1]
-    const movedPath: NbtPath =
-      typeof last === 'number' && typeof to === 'number' ? [...parentPath, to] : [...parentPath, last]
+    if (typeof last === 'number' && typeof to === 'number') {
+      // List reorder: the positional dirty ids of ALL siblings shift. Remap the
+      // existing set so each haunted sibling (and any haunted descendant under
+      // one) follows its element to the new index, then mark the moved element.
+      set((s) => {
+        const remapped = remapListDirtyOnMove(s.dirty, parentPath, last, to)
+        return {
+          doc: { ...doc, root: root as NbtDocument['root'] },
+          dirty: withDirty(remapped, dirtyId([...parentPath, to])),
+        }
+      })
+      return
+    }
+    // Compound reorder: ids are string-keyed and stable; only the moved key's
+    // own path needs marking.
     set((s) => ({
       doc: { ...doc, root: root as NbtDocument['root'] },
-      dirty: withDirty(s.dirty, dirtyId(movedPath)),
+      dirty: withDirty(s.dirty, dirtyId([...parentPath, last])),
     }))
   },
   resurrect: (id) => {
