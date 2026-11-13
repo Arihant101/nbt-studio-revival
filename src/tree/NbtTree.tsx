@@ -15,8 +15,9 @@ import { useCallback, useState } from 'react'
 import type { NbtDocument, Tag } from '../nbt/types'
 import { TagType } from '../nbt/types'
 import type { NbtPath } from '../nbt/edit'
+import { useNbtStore } from '../store/useNbtStore'
 import { useThemeStore, type Theme } from '../store/useThemeStore'
-import { childCount, tagDisplay } from './tagDisplay'
+import { childCount, hauntedMarker, tagDisplay } from './tagDisplay'
 import { EditableLeafValue } from './EditableLeafValue'
 import {
   AddChildControl,
@@ -69,14 +70,23 @@ interface TreeNodeProps {
   toggle: (key: string) => void
   /** The parent container tag, or null for the root node. */
   parent: Tag | null
+  /**
+   * JSON path ids of tags edited/added/renamed/moved since load or last export
+   * (the store's `dirty` set). A node is "haunted"/unsaved when its own id is a
+   * member. Passed by reference so every node shares one lookup.
+   */
+  dirty: Set<string>
 }
 
-function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle, parent }: TreeNodeProps) {
+function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle, parent, dirty }: TreeNodeProps) {
   const display = tagDisplay(tag.type, theme)
   const container = isContainer(tag)
   // Identity/addressing uses the injective JSON form; the slash-joined form is
   // display-only (data-nbt-path) for human-readability.
   const id = pathId(path)
+  // This node is "haunted" (unsaved) when its path id is in the dirty set.
+  const haunted = dirty.has(id)
+  const marker = hauntedMarker(theme)
   const displayPath = pathDisplay(path)
   const isExpanded = expanded.has(id)
   const count = childCount(tag)
@@ -101,6 +111,12 @@ function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle, parent }
       </span>
       <span className="text-muted">{display.label}</span>
       {keyLabel !== null && <span className="text-accent">{keyLabel}</span>}
+      {haunted && (
+        <span className="nbt-haunted text-accent" title={marker.label}>
+          <span aria-hidden="true">{marker.glyph}</span>
+          <span className="sr-only">{marker.label}</span>
+        </span>
+      )}
       {container ? (
         <span className="text-muted">({count})</span>
       ) : (
@@ -156,7 +172,7 @@ function TreeNode({ nodeKey, tag, path, depth, theme, expanded, toggle, parent }
       )}
       {container && isExpanded && (
         <ul className="border-l border-edge">
-          {renderChildren(tag, path, depth + 1, theme, expanded, toggle)}
+          {renderChildren(tag, path, depth + 1, theme, expanded, toggle, dirty)}
         </ul>
       )}
     </li>
@@ -170,6 +186,7 @@ function renderChildren(
   theme: Theme,
   expanded: Set<string>,
   toggle: (key: string) => void,
+  dirty: Set<string>,
 ) {
   if (tag.type === TagType.Compound) {
     const entries = [...tag.value.entries()]
@@ -186,6 +203,7 @@ function renderChildren(
           expanded={expanded}
           toggle={toggle}
           parent={tag}
+          dirty={dirty}
         />
       )
     })
@@ -204,6 +222,7 @@ function renderChildren(
           expanded={expanded}
           toggle={toggle}
           parent={tag}
+          dirty={dirty}
         />
       )
     })
@@ -219,6 +238,10 @@ export interface NbtTreeProps {
 /** Collapsible, read-only tree view of an NBT document. */
 export function NbtTree({ doc }: NbtTreeProps) {
   const theme = useThemeStore((s) => s.theme)
+  // Haunted/unsaved path ids from the store; a node marks itself when its own
+  // id is a member. Read once here and threaded down so every node shares one
+  // lookup rather than each subscribing.
+  const dirty = useNbtStore((s) => s.dirty)
   // Root ([]) starts expanded; deeper containers start collapsed.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([pathId([])]))
 
@@ -247,6 +270,7 @@ export function NbtTree({ doc }: NbtTreeProps) {
         expanded={expanded}
         toggle={toggle}
         parent={null}
+        dirty={dirty}
       />
     </ul>
   )

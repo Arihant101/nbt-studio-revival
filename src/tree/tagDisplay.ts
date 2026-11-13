@@ -65,6 +65,32 @@ export function tagDisplay(type: TagType, theme: Theme): TagDisplay {
   return { label: d.label, sigil: d.sigils[theme], color: d.color }
 }
 
+/**
+ * Themed "haunted" (unsaved/modified) marker shown on a dirty tree node. The
+ * glyph conveys the state statically; the `.nbt-haunted` class (defined in
+ * index.css) adds the glow/flicker animation ONLY under prefers-reduced-motion:
+ * no-preference, so reduced-motion users still see the glyph + accessible
+ * label. `label` is the accessible name routed to the marker's title/sr-only
+ * text, never aria-hidden-only. Dark gets a subtle "modified" dot; spooky a
+ * ghost. Routed through this copy map (never ad-hoc ternaries in JSX).
+ */
+export interface HauntedMarker {
+  /** Static glyph conveying unsaved state at a glance. */
+  glyph: string
+  /** Accessible / visible label for the marker (e.g. "modified", "haunted"). */
+  label: string
+}
+
+const HAUNTED_MARKER: Record<Theme, HauntedMarker> = {
+  dark: { glyph: '•', label: 'modified (unsaved)' },
+  spooky: { glyph: '👻', label: 'haunted (unsaved)' },
+}
+
+/** Themed haunted/unsaved marker glyph + accessible label for a dirty node. */
+export function hauntedMarker(theme: Theme): HauntedMarker {
+  return HAUNTED_MARKER[theme]
+}
+
 /** Max number of elements shown in a typed-array preview before eliding. */
 const PREVIEW_LIMIT = 3
 

@@ -20,6 +20,7 @@ export default function App() {
   const fileName = useNbtStore((s) => s.fileName)
   const doc = useNbtStore((s) => s.doc)
   const load = useNbtStore((s) => s.load)
+  const markExported = useNbtStore((s) => s.markExported)
   const { theme, toggle } = useThemeStore()
   const spooky = theme === 'spooky'
 
@@ -55,6 +56,10 @@ export default function App() {
     try {
       const result = await exportDocument(doc, fileName, format)
       triggerDownload(result)
+      // A successful export is the "save": clear the haunted/unsaved state so
+      // the tree no longer marks those tags. On failure (caught below) the
+      // dirty set is left intact so the user still sees what changed.
+      markExported()
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))

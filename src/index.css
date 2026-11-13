@@ -53,3 +53,36 @@
     transition: transform 150ms ease;
   }
 }
+
+/* Haunted / unsaved-edit marker on a dirty tree node (Task 10, increment B).
+   The marker element always carries a STATIC indicator so the "unsaved" state
+   is perceivable without motion: a persistent accent ring + accent text (plus
+   its sr-only "modified"/"haunted" label in the DOM). Only the soft glow/flicker
+   animation is gated behind prefers-reduced-motion: no-preference, mirroring the
+   .nbt-caret pattern, so reduced-motion users get the static ring with no
+   animation. Colors reference the theme token vars (never raw hex); --accent is
+   defined per theme above, keeping WCAG AA contrast in both. */
+.nbt-haunted {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0.25rem;
+  padding-inline: 0.125rem;
+  outline: 1px solid var(--accent);
+  color: var(--accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .nbt-haunted {
+    animation: nbt-haunt-glow 1.6s ease-in-out infinite;
+  }
+  @keyframes nbt-haunt-glow {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+      opacity: 1;
+    }
+    50% {
+      box-shadow: 0 0 6px 1px var(--accent);
+      opacity: 0.75;
+    }
+  }
+}

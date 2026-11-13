@@ -31,7 +31,7 @@ function makeDoc(): NbtDocument {
 }
 
 beforeEach(() => {
-  useNbtStore.setState({ fileName: null, doc: null })
+  useNbtStore.getState().clear()
 })
 
 describe('useNbtStore edit actions', () => {
@@ -196,5 +196,75 @@ describe('useNbtStore graveyard (undo)', () => {
     s().resurrect('grave-does-not-exist')
     expect(s().doc).toBe(before)
     expect(s().graveyardError).toBeNull()
+  })
+})
+
+describe('useNbtStore haunted/dirty tracking', () => {
+  const s = () => useNbtStore.getState()
+  // Path ids use the same JSON.stringify(path) form as NbtTree's pathId.
+  const id = (path: unknown[]): string => JSON.stringify(path)
+
+  it('load starts with an empty dirty set', () => {
+    s().load('level.dat', makeDoc())
+    expect(s().dirty.size).toBe(0)
+  })
+
+  it('setValue marks the edited leaf path dirty', () => {
+    s().load('level.dat', makeDoc())
+    s().setValue(['intTag'], 42)
+    expect(s().dirty.has(id(['intTag']))).toBe(true)
+  })
+
+  it('rename marks the renamed key’s new path dirty', () => {
+    s().load('level.dat', makeDoc())
+    s().rename([], 'intTag', 'renamed')
+    expect(s().dirty.has(id(['renamed']))).toBe(true)
+  })
+
+  it('add marks the new child path dirty for a Compound key', () => {
+    s().load('level.dat', makeDoc())
+    s().add([], { type: TagType.Byte, value: 7 }, 'b')
+    expect(s().dirty.has(id(['b']))).toBe(true)
+  })
+
+  it('add marks the appended index dirty for a List append', () => {
+    s().load('level.dat', makeDoc())
+    // intList starts with two elements, so an append lands at index 2.
+    s().add(['intList'], { type: TagType.Int, value: 30 })
+    expect(s().dirty.has(id(['intList', 2]))).toBe(true)
+  })
+
+  it('move marks the moved List element’s resulting index dirty', () => {
+    s().load('level.dat', makeDoc())
+    s().move(['intList', 0], 1)
+    expect(s().dirty.has(id(['intList', 1]))).toBe(true)
+  })
+
+  it('remove does NOT add a dirty path (reflected by the graveyard instead)', () => {
+    s().load('level.dat', makeDoc())
+    s().remove(['stringTag'])
+    expect(s().dirty.size).toBe(0)
+  })
+
+  it('markExported clears all dirty paths', () => {
+    s().load('level.dat', makeDoc())
+    s().setValue(['intTag'], 42)
+    s().add([], { type: TagType.Byte, value: 7 }, 'b')
+    expect(s().dirty.size).toBeGreaterThan(0)
+    s().markExported()
+    expect(s().dirty.size).toBe(0)
+  })
+
+  it('load and clear reset dirty to empty', () => {
+    s().load('level.dat', makeDoc())
+    s().setValue(['intTag'], 42)
+    expect(s().dirty.size).toBe(1)
+    // Loading a fresh doc clears dirty.
+    s().load('other.dat', makeDoc())
+    expect(s().dirty.size).toBe(0)
+    s().setValue(['intTag'], 7)
+    expect(s().dirty.size).toBe(1)
+    s().clear()
+    expect(s().dirty.size).toBe(0)
   })
 })

@@ -119,6 +119,49 @@ describe('App export: failed export surfaces a themed alert and keeps the doc', 
   })
 })
 
+describe('App haunted tags: unsaved-edit marker set on edit, cleared on export', () => {
+  it('marks an edited leaf as haunted, then clears it after a successful export', async () => {
+    // Stub the object-URL APIs so triggerDownload succeeds in jsdom and the
+    // export resolves, exercising the markExported() success path.
+    const origCreate = globalThis.URL.createObjectURL
+    const origRevoke = globalThis.URL.revokeObjectURL
+    globalThis.URL.createObjectURL = vi.fn(
+      () => 'blob:stub',
+    ) as unknown as typeof URL.createObjectURL
+    globalThis.URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL
+    try {
+      useNbtStore.getState().load('sample.nbt', sampleDocument())
+      render(<App />)
+
+      // No haunted markers before any edit (dark theme marker label).
+      expect(screen.queryAllByText('modified (unsaved)')).toHaveLength(0)
+
+      // Edit the top-level intTag leaf through its inline editor so its path
+      // becomes dirty.
+      fireEvent.click(screen.getByRole('button', { name: 'Edit value of intTag (intTag)' }))
+      const input = screen.getByRole('textbox', { name: 'Value for intTag (intTag)' })
+      fireEvent.change(input, { target: { value: '99' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+
+      // The haunted indicator appears (static sr-only label, not animation).
+      await waitFor(() => {
+        expect(screen.getAllByText('modified (unsaved)').length).toBeGreaterThan(0)
+      })
+      expect(useNbtStore.getState().dirty.size).toBeGreaterThan(0)
+
+      // A successful export clears the haunted/unsaved state.
+      fireEvent.click(screen.getByRole('button', { name: /Export \.nbt/ }))
+      await waitFor(() => {
+        expect(useNbtStore.getState().dirty.size).toBe(0)
+      })
+      expect(screen.queryAllByText('modified (unsaved)')).toHaveLength(0)
+    } finally {
+      globalThis.URL.createObjectURL = origCreate
+      globalThis.URL.revokeObjectURL = origRevoke
+    }
+  })
+})
+
 describe('App import: failed import keeps the previous doc', () => {
   it('shows an error and leaves a previously-loaded doc intact on a corrupted import', async () => {
     // Seed a known-good doc first.
