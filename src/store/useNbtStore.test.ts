@@ -268,3 +268,111 @@ describe('useNbtStore haunted/dirty tracking', () => {
     expect(s().dirty.size).toBe(0)
   })
 })
+
+describe('useNbtStore haunted dirty tracking survives List reorder', () => {
+  const s = () => useNbtStore.getState()
+  const id = (path: unknown[]): string => JSON.stringify(path)
+
+  // A document whose intList has three distinguishable Int elements plus a
+  // compoundList whose elements each hold an inner Int, so we can exercise a
+  // dirty descendant that must follow its moved ancestor.
+  function make3(): NbtDocument {
+    return {
+      name: 'Level',
+      compression: 'none',
+      root: {
+        type: TagType.Compound,
+        value: new Map<string, Tag>([
+          ['intTag', { type: TagType.Int, value: 1 }],
+          [
+            'intList',
+            {
+              type: TagType.List,
+              elementType: TagType.Int,
+              value: [
+                { type: TagType.Int, value: 10 },
+                { type: TagType.Int, value: 20 },
+                { type: TagType.Int, value: 30 },
+              ],
+            },
+          ],
+          [
+            'compoundList',
+            {
+              type: TagType.List,
+              elementType: TagType.Compound,
+              value: [
+                { type: TagType.Compound, value: new Map<string, Tag>([['inner', { type: TagType.Int, value: 100 }]]) },
+                { type: TagType.Compound, value: new Map<string, Tag>([['inner', { type: TagType.Int, value: 200 }]]) },
+                { type: TagType.Compound, value: new Map<string, Tag>([['inner', { type: TagType.Int, value: 300 }]]) },
+              ],
+            },
+          ],
+        ]),
+      },
+    }
+  }
+
+  it('(a) a dirty List element follows its new index when a sibling is reordered', () => {
+    s().load('level.dat', make3())
+    // Edit the element at index 2 (value 30) so it becomes haunted.
+    s().setValue(['intList', 2], 99)
+    expect(s().dirty.has(id(['intList', 2]))).toBe(true)
+    // Move the element at index 0 to index 2. With from<to, indices in (0,2]
+    // shift down by one, so the edited element at index 2 becomes index 1.
+    s().move(['intList', 0], 2)
+    // The haunted id now points at the NEW index (1) and not the stale one (2
+    // no longer holds the edited element — that slot is the moved element).
+    expect(s().dirty.has(id(['intList', 1]))).toBe(true)
+    // getIn confirms the element now at the new index is the edited one (99)
+    // and that index 2 holds the moved element (value 10), not the edited one.
+    const doc = s().doc!
+    expect(getIn(doc.root, ['intList', 1])).toEqual({ type: TagType.Int, value: 99 })
+    expect(getIn(doc.root, ['intList', 2])).toEqual({ type: TagType.Int, value: 10 })
+  })
+
+  it('(a2) a dirty descendant follows its moved ancestor across the reorder', () => {
+    s().load('level.dat', make3())
+    // Edit the inner Int of compoundList element at index 2 -> dirty descendant.
+    s().setValue(['compoundList', 2, 'inner'], 999)
+    expect(s().dirty.has(id(['compoundList', 2, 'inner']))).toBe(true)
+    // Move index 0 to index 2: element at 2 shifts to 1, so its descendant too.
+    s().move(['compoundList', 0], 2)
+    expect(s().dirty.has(id(['compoundList', 1, 'inner']))).toBe(true)
+    expect(s().dirty.has(id(['compoundList', 2, 'inner']))).toBe(false)
+    const doc = s().doc!
+    expect(getIn(doc.root, ['compoundList', 1, 'inner'])).toEqual({ type: TagType.Int, value: 999 })
+  })
+
+  it('(b) moving the dirty element itself still marks its new index', () => {
+    s().load('level.dat', make3())
+    s().setValue(['intList', 0], 11)
+    expect(s().dirty.has(id(['intList', 0]))).toBe(true)
+    // Move the dirty element from 0 to 2: it should now be dirty at index 2.
+    s().move(['intList', 0], 2)
+    expect(s().dirty.has(id(['intList', 2]))).toBe(true)
+    expect(s().dirty.has(id(['intList', 0]))).toBe(false)
+    const doc = s().doc!
+    expect(getIn(doc.root, ['intList', 2])).toEqual({ type: TagType.Int, value: 11 })
+  })
+
+  it('(c) a dirty element whose index is unaffected keeps its id', () => {
+    s().load('level.dat', make3())
+    // Edit index 0 (haunted), then move 1 -> 2 (from>to range [2,1) is empty of
+    // index 0; index 0 is outside [to, from) = [2,1)), so index 0 is unchanged.
+    s().setValue(['intList', 0], 11)
+    s().move(['intList', 1], 2)
+    expect(s().dirty.has(id(['intList', 0]))).toBe(true)
+    const doc = s().doc!
+    expect(getIn(doc.root, ['intList', 0])).toEqual({ type: TagType.Int, value: 11 })
+  })
+
+  it('(d) a Compound dirty id is unaffected by a List sibling move', () => {
+    s().load('level.dat', make3())
+    // Mark a Compound-keyed path dirty, then reorder a List elsewhere.
+    s().setValue(['intTag'], 7)
+    expect(s().dirty.has(id(['intTag']))).toBe(true)
+    s().move(['intList', 0], 2)
+    expect(s().dirty.has(id(['intTag']))).toBe(true)
+  })
+})
